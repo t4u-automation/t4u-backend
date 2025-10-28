@@ -1,0 +1,51 @@
+# Google Cloud Build configuration for deploying TestOpsAI to Cloud Run
+steps:
+  # Build the container image
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "--no-cache" # Force fresh build, don't use cached layers
+      - "-t"
+      - "gcr.io/$PROJECT_ID/testopsai-api:latest"
+      - "-f"
+      - "Dockerfile.api"
+      - "."
+
+  # Push the container image to Container Registry
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "gcr.io/$PROJECT_ID/testopsai-api:latest"
+
+  # Deploy to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "deploy"
+      - "testopsai-api"
+      - "--image"
+      - "gcr.io/$PROJECT_ID/testopsai-api:latest"
+      - "--region"
+      - "us-central1"
+      - "--platform"
+      - "managed"
+      - "--allow-unauthenticated"
+      - "--max-instances"
+      - "10"
+      - "--memory"
+      - "4Gi"
+      - "--cpu"
+      - "4"
+      - "--timeout"
+      - "3600"
+      - "--set-env-vars"
+      - "E2B_API_KEY=${_E2B_API_KEY},ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY}"
+
+# Specify substitutions
+substitutions:
+  _E2B_API_KEY: "" # Set via gcloud builds submit --substitutions
+  _ANTHROPIC_API_KEY: "" # Claude API key
+
+images:
+  - "gcr.io/$PROJECT_ID/testopsai-api:latest"

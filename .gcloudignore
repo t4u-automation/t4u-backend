@@ -1,0 +1,29 @@
+# .gcloudignore - What to exclude when uploading to Cloud Build
+# This overrides .gitignore for gcloud operations
+
+# Exclude these from upload
+__pycache__/
+*.pyc
+venv/
+env/
+logs/
+*.log
+.vscode/
+.idea/
+.DS_Store
+.git/
+*.md
+
+# Exclude development files
+toolcall-old.py
+cleanup_sandboxes.py
+workspace/
+
+# IMPORTANT: Do NOT ignore config files (we need them in Cloud Build!)
+# Comment out or remove these lines to include config:
+# !config/config.toml
+# !config/firebase-service-account.json
+
+# The ! prefix means "do not ignore" - but gcloud doesn't support it well
+# So we just don't list config/ here at all, which means it WILL be included
+

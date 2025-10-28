@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.pyc
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific - SECRETS (DO NOT COMMIT!)
+config/firebase-service-account.json
+config/config.toml
+.env
+.env.local
+*.key
+*.pem
+
+# Keep example files for open source
+!config/*.example*
+!.env.example
+
+# Temporary files
+*.tmp
+*.bak
+
+config/firebase-service-account.json

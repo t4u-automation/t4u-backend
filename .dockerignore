@@ -1,0 +1,52 @@
+# Ignore unnecessary files for Docker build
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Logs
+logs/
+*.log
+
+# Development files
+*.md
+!README.md
+
+# Test files
+test/
+tests/
+
+# Don't ignore config files - we need them!
+!config/config.toml
+!config/firebase-service-account.json
+!config/*.toml
+
+# Other
+workspace/
+e2b_custom/
+toolcall-old.py
+cleanup_sandboxes.py
+

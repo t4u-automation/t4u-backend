@@ -1,0 +1,5 @@
+# E2B Template Configuration
+
+template_id = "testopsai-vnc-desktop"
+dockerfile = "e2b.Dockerfile"
+
