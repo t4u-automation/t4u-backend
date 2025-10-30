@@ -33,6 +33,7 @@ config/config.toml
 .env.local
 *.key
 *.pem
+deploy.local.sh
 
 # Keep example files for open source
 !config/*.example*
