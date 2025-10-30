@@ -1,0 +1,150 @@
+# espv2-run.yaml
+# ESPv2 Service Configuration for TestOpsAI API
+# 
+# Configuration:
+# - ESP Service URL: https://t4u-api-esp-1077634808665.us-central1.run.app
+# - Backend Service URL: https://testopsai-api-1077634808665.us-central1.run.app
+swagger: '2.0'
+info:
+  title: TestOpsAI API v1
+  description: API For TestOpsAI Agent Service
+  version: 1.0.1
+host: "t4u-api-esp-1077634808665.us-central1.run.app"
+schemes:
+- https
+security:
+  - firebase: []
+securityDefinitions: 
+  firebase:
+    authorizationUrl: ""
+    flow: "implicit"
+    type: "oauth2"
+    x-google-issuer: "https://securetoken.google.com/testopsai"
+    x-google-jwks_uri: "https://www.googleapis.com/service_accounts/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+    x-google-audiences: "testopsai"
+produces:
+- application/json
+x-google-backend:
+  address: https://testopsai-api-1077634808665.us-central1.run.app
+  jwt_audience: https://testopsai-api-1077634808665.us-central1.run.app
+  deadline: 3600.0
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      operationId: health_check
+      security: []  # No authentication required for health checks
+      responses:
+        '200':
+          description: 'Service health status'
+  /agent/create-session:
+    post:
+      summary: Create a new agent session
+      operationId: create_session
+      responses:
+        '200':
+          description: 'Session created successfully'
+  /agent/start:
+    post:
+      summary: Start E2B agent and stream execution via SSE
+      operationId: start_agent
+      responses:
+        '200':
+          description: 'Server-Sent Events stream with execution updates'
+  /agent/terminate/{session_id}:
+    post:
+      summary: Terminate a running agent session
+      operationId: terminate_session
+      parameters:
+        - name: session_id
+          in: path
+          description: Session ID to terminate
+          required: true
+          type: string
+      responses:
+        '200':
+          description: 'Session terminated successfully'
+  /agent/pause/{session_id}:
+    post:
+      summary: Pause a running agent session
+      operationId: pause_session
+      parameters:
+        - name: session_id
+          in: path
+          description: Session ID to pause
+          required: true
+          type: string
+      responses:
+        '200':
+          description: 'Session paused successfully'
+  /agent/resume/{session_id}:
+    post:
+      summary: Resume a paused agent session
+      operationId: resume_session
+      parameters:
+        - name: session_id
+          in: path
+          description: Session ID to resume
+          required: true
+          type: string
+      responses:
+        '200':
+          description: 'Session resumed successfully'
+  /agent/intervene/{session_id}:
+    post:
+      summary: Inject guidance message and auto-resume agent
+      operationId: intervene_session
+      parameters:
+        - name: session_id
+          in: path
+          description: Session ID to intervene
+          required: true
+          type: string
+      responses:
+        '200':
+          description: 'Intervention completed successfully'
+  /agent/respond/{session_id}:
+    post:
+      summary: Send human response to agent waiting for input
+      operationId: respond_to_agent
+      parameters:
+        - name: session_id
+          in: path
+          description: Session ID to respond to
+          required: true
+          type: string
+      responses:
+        '200':
+          description: 'Response delivered to agent'
+  /agent/sessions:
+    get:
+      summary: List all active agent sessions
+      operationId: list_sessions
+      responses:
+        '200':
+          description: 'List of active sessions'
+  /agent/replay/{tenant_id}/{test_case_id}:
+    post:
+      summary: Replay proven steps from a test case (SSE stream)
+      operationId: replay_proven_steps
+      parameters:
+        - name: tenant_id
+          in: path
+          description: Tenant ID
+          required: true
+          type: string
+        - name: test_case_id
+          in: path
+          description: Test Case ID to replay
+          required: true
+          type: string
+      responses:
+        '200':
+          description: 'Server-Sent Events stream with replay execution updates'
+  /api/runs/execute:
+    post:
+      summary: Execute a test run (multiple test cases)
+      operationId: execute_run
+      responses:
+        '200':
+          description: 'Run execution started'

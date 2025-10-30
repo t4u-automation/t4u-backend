@@ -29,8 +29,11 @@ gcloud config set project ${PROJECT_ID}
 echo ""
 echo "🔨 Submitting build to Cloud Build..."
 echo "   (Building in Google Cloud - no local Docker required)"
+# Get the script's directory and go to project root
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "${SCRIPT_DIR}/../.."
 gcloud builds submit \
-  --config cloudbuild.yaml \
+  --config app/deployment_google/cloudbuild.yaml \
   --substitutions _E2B_API_KEY="${E2B_API_KEY}",_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
 
 # Get the service URL

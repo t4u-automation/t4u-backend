@@ -8,7 +8,7 @@ steps:
       - "-t"
       - "gcr.io/$PROJECT_ID/testopsai-api:latest"
       - "-f"
-      - "Dockerfile.api"
+      - "app/deployment_google/Dockerfile.api"
       - "."
 
   # Push the container image to Container Registry
