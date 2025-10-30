@@ -1799,6 +1799,81 @@ exit 0
             if line.strip():
                 print(f"  {line}")
 
+    async def _run_validation(self, validate_after: dict) -> ToolResult:
+        """
+        Run validation after an action completes
+        
+        Args:
+            validate_after: Validation specification with type, description, and parameters
+            
+        Returns:
+            ToolResult with validation success/failure
+        """
+        if not validate_after:
+            return None
+            
+        validation_type = validate_after.get("type")
+        description = validate_after.get("description", "Validation")
+        
+        try:
+            if validation_type == "url_contains":
+                expected_text = validate_after.get("expected_text", "")
+                result = await self._execute_browser_command({
+                    "action": "assert_url_contains",
+                    "expected_text": expected_text,
+                    "assertion_description": description
+                })
+                if result.get("success"):
+                    return None  # Validation passed, continue
+                else:
+                    return self.fail_response(f"❌ Validation failed: {description} - {result.get('error', 'URL does not contain expected text')}")
+                    
+            elif validation_type == "element_visible":
+                search_text = validate_after.get("search_text", "")
+                result = await self._execute_browser_command({
+                    "action": "assert_element_visible",
+                    "search_text": search_text,
+                    "assertion_description": description
+                })
+                if result.get("success"):
+                    return None  # Validation passed
+                else:
+                    return self.fail_response(f"❌ Validation failed: {description} - {result.get('error', 'Element not visible')}")
+                    
+            elif validation_type == "element_not_visible":
+                search_text = validate_after.get("search_text", "")
+                result = await self._execute_browser_command({
+                    "action": "assert_element_hidden",
+                    "search_text": search_text,
+                    "assertion_description": description
+                })
+                if result.get("success"):
+                    return None  # Validation passed
+                else:
+                    return self.fail_response(f"❌ Validation failed: {description} - {result.get('error', 'Element is still visible')}")
+                    
+            elif validation_type == "count_equals":
+                search_text = validate_after.get("search_text", "")
+                expected_count = validate_after.get("expected_count", 0)
+                locator_type = validate_after.get("locator_type", "text")
+                result = await self._execute_browser_command({
+                    "action": "assert_count_equals",
+                    "search_text": search_text,
+                    "expected_count": expected_count,
+                    "locator_type": locator_type,
+                    "assertion_description": description
+                })
+                if result.get("success"):
+                    return None  # Validation passed
+                else:
+                    return self.fail_response(f"❌ Validation failed: {description} - {result.get('error', 'Count does not match')}")
+                    
+            else:
+                return self.fail_response(f"Unknown validation type: {validation_type}")
+                
+        except Exception as e:
+            return self.fail_response(f"Validation error: {str(e)}")
+    
     async def _execute_browser_command(self, command: dict, timeout: int = 60) -> dict:
         """Execute a command on the persistent browser"""
         await self._ensure_browser_server()
@@ -1869,6 +1944,9 @@ exit 0
         if not self.sandbox:
             return self.fail_response("E2B sandbox not initialized")
 
+        # Extract validate_after from kwargs if present
+        validate_after = kwargs.pop("validate_after", None)
+
         try:
             # NEW: Locator-based actions (stable, no indices)
             if action == "click":
@@ -1919,6 +1997,11 @@ exit 0
                         print(f"  {line}")
                 
                 if result.get("success"):
+                    # Run validation if specified
+                    if validate_after:
+                        validation_result = await self._run_validation(validate_after)
+                        if validation_result:  # If validation failed, return the failure
+                            return validation_result
                     return self.success_response(result.get("message", "Clicked element"))
                 else:
                     return self.fail_response(result.get("error", "Click failed"))
@@ -1958,6 +2041,11 @@ exit 0
                 })
                 
                 if result.get("success"):
+                    # Run validation if specified
+                    if validate_after:
+                        validation_result = await self._run_validation(validate_after)
+                        if validation_result:  # If validation failed, return the failure
+                            return validation_result
                     return self.success_response(result.get("message", "Filled input"))
                 else:
                     return self.fail_response(result.get("error", "Fill failed"))
@@ -2035,6 +2123,12 @@ exit 0
                     if result.get("page_text"):
                         response_msg += f"\n\nPage text (first 500 chars):\n{result['page_text'][:500]}"
 
+                    # Run validation if specified
+                    if validate_after:
+                        validation_result = await self._run_validation(validate_after)
+                        if validation_result:  # If validation failed, return the failure
+                            return validation_result
+                    
                     # Return without base64 to save tokens
                     return self.success_response(response_msg)
                 else:
