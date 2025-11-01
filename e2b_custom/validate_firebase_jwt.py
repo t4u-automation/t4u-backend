@@ -224,8 +224,6 @@ class TokenPlugin:
         try:
             # Log token received (for debugging)
             print(f"INFO: lookup called with token length={len(token) if token else 0}", file=sys.stderr)
-            if token:
-                print(f"INFO:   token preview={token[:50]}...", file=sys.stderr)
             
             # Check if token is provided
             if not token:
@@ -239,24 +237,26 @@ class TokenPlugin:
             
             print(f"INFO: JWT token validated successfully", file=sys.stderr)
             
-            # Extract user_id from token (can be 'sub' or 'user_id')
+            # Extract user_id for logging purposes
             token_user_id = decoded_token.get('user_id') or decoded_token.get('sub')
-            if not token_user_id:
-                print("ERROR: user_id not found in token", file=sys.stderr)
+            
+            # Extract tenant_id from token (custom claim)
+            token_tenant_id = decoded_token.get('tenant_id')
+            if not token_tenant_id:
+                print("ERROR: tenant_id not found in token custom claims", file=sys.stderr)
                 return None
             
-            # Optional: Check user_id matches metadata if metadata exists
-            # This provides ownership validation when metadata is available (e.g., agent sessions)
-            # But doesn't block connections when metadata is missing (e.g., RUN contexts)
+            # Validate tenant_id matches session metadata
+            # All users from the same tenant can access the sandbox
             session_data = load_session_metadata()
             if session_data:
-                session_user_id = session_data.get('user_id')
-                if session_user_id and token_user_id != session_user_id:
-                    print(f"ERROR: user_id mismatch. Token: {token_user_id}, Session: {session_user_id}", file=sys.stderr)
+                session_tenant_id = session_data.get('tenant_id')
+                if session_tenant_id and token_tenant_id != session_tenant_id:
+                    print(f"ERROR: tenant_id mismatch. Token: {token_tenant_id}, Session: {session_tenant_id}", file=sys.stderr)
                     return None
-                print(f"INFO: Authorized connection for user_id={token_user_id} (metadata verified)", file=sys.stderr)
+                print(f"INFO: Authorized connection for tenant_id={token_tenant_id}, user_id={token_user_id} (metadata verified)", file=sys.stderr)
             else:
-                print(f"INFO: Authorized connection for user_id={token_user_id} (no metadata - RUN context)", file=sys.stderr)
+                print(f"INFO: Authorized connection for tenant_id={token_tenant_id}, user_id={token_user_id} (no metadata - RUN context)", file=sys.stderr)
             
             # All checks passed - allow connection
             # Return target as tuple (host, port) - websockify expects this format
