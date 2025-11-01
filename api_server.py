@@ -8,6 +8,7 @@ import os
 import sys
 import warnings
 import logging
+from pathlib import Path
 
 # Suppress Google gRPC ALTS warnings (must be set before importing grpc)
 os.environ["GRPC_VERBOSITY"] = "NONE"
@@ -53,6 +54,7 @@ from app.agent.e2b_agent import E2BTestOpsAI
 from app.firestore import firestore_client
 from app.schema import AgentState, Message
 from app.webhook import StepExecutionSchema
+from app.config import config
 
 app = FastAPI(title="E2B Agent API")
 
@@ -70,6 +72,39 @@ active_sessions = {}
 
 # Store human response queues by session_id
 human_response_queues = {}
+
+
+def get_firebase_project_id() -> str:
+    """Get Firebase project ID from config, environment variable, or service account JSON"""
+    # 1. Try config file first
+    if config.firestore and hasattr(config.firestore, "project_id") and config.firestore.project_id:
+        return config.firestore.project_id
+    
+    # 2. Try environment variable
+    project_id = os.getenv("FIREBASE_PROJECT_ID")
+    if project_id:
+        return project_id
+    
+    # 3. Try to extract from service account JSON
+    if config.firestore and hasattr(config.firestore, "service_account_path"):
+        try:
+            service_account_path = Path(config.firestore.service_account_path)
+            if service_account_path.exists():
+                with open(service_account_path, 'r') as f:
+                    service_account = json.load(f)
+                    project_id = service_account.get("project_id")
+                    if project_id:
+                        return project_id
+        except Exception as e:
+            print(f"⚠️  Warning: Could not extract project_id from service account: {e}")
+    
+    # 4. Fail explicitly if not configured
+    raise ValueError(
+        "Firebase project_id not configured. Please set one of:\n"
+        "  1. config.firestore.project_id in your config file\n"
+        "  2. FIREBASE_PROJECT_ID environment variable\n"
+        "  3. project_id in your service account JSON file"
+    )
 
 
 # Shared function to execute a test case (used by replay and runs)
@@ -131,12 +166,54 @@ async def execute_test_case_proven_steps(
             test_case_id=test_case_id
         )
         
+        # Write session metadata to sandbox for websockify JWT validation
+        # CRITICAL: Must write BEFORE returning VNC URL to prevent race condition
+        session_metadata = {
+            "user_id": user_id,
+            "tenant_id": tenant_id or "",
+            "firebase_project_id": get_firebase_project_id()
+        }
+        metadata_json = json.dumps(session_metadata)
+        
+        # Write and verify metadata with retry
+        metadata_written = False
+        for attempt in range(3):
+            try:
+                agent.sandbox.filesystem_write(
+                    "/home/user/.vnc_sessions.json",
+                    metadata_json
+                )
+                
+                # Verify it was written
+                try:
+                    check = agent.sandbox.filesystem_read("/home/user/.vnc_sessions.json")
+                    if check and len(check) > 0:
+                        metadata_written = True
+                        print(f"✅ Session metadata written and verified (attempt {attempt + 1})")
+                        break
+                except Exception as verify_error:
+                    print(f"⚠️  Metadata verification failed (attempt {attempt + 1}): {verify_error}")
+                    
+            except Exception as e:
+                print(f"⚠️  Failed to write session metadata (attempt {attempt + 1}): {e}")
+            
+            if attempt < 2:
+                await asyncio.sleep(0.5)  # Wait before retry
+        
+        if not metadata_written:
+            raise RuntimeError(
+                "Failed to write session metadata after 3 attempts. "
+                "VNC connection would be insecure without proper user validation."
+            )
+        
         # Get VNC URL (using wss for WebSocket connection)
+        # Note: Frontend must add Firebase JWT token as query param:
+        # wss://{host}/websockify?token={jwt_token}
         vnc_url = None
         if agent.sandbox and hasattr(agent.sandbox, "sandbox"):
             try:
                 host = agent.sandbox.sandbox.get_host(6080)
-                vnc_url = f"wss://{host}/websockify"  # Secure WebSocket URL for noVNC
+                vnc_url = f"wss://{host}/websockify"  # Frontend adds ?token={jwt_token}
                 
                 if run_updates_callback:
                     await run_updates_callback({f'results.{test_case_id}.vnc_url': vnc_url})
@@ -417,6 +494,48 @@ async def start_agent(request: AgentRequest):
             # Update session with sandbox_id
             await firestore_client.update_session_sandbox_id(session_id, sandbox_id)
 
+            # Write session metadata to sandbox for websockify JWT validation
+            # CRITICAL: Must write BEFORE returning VNC URL to prevent race condition
+            session_metadata = {
+                "user_id": request.user_id,
+                "tenant_id": request.tenant_id or "",
+                "firebase_project_id": get_firebase_project_id()
+            }
+            metadata_json = json.dumps(session_metadata)
+            
+            # Write and verify metadata with retry
+            metadata_written = False
+            for attempt in range(3):
+                try:
+                    agent.sandbox.filesystem_write(
+                        "/home/user/.vnc_sessions.json",
+                        metadata_json
+                    )
+                    
+                    # Verify it was written
+                    try:
+                        check = agent.sandbox.filesystem_read("/home/user/.vnc_sessions.json")
+                        if check and len(check) > 0:
+                            metadata_written = True
+                            print(f"✅ Session metadata written and verified (attempt {attempt + 1})")
+                            break
+                    except Exception as verify_error:
+                        print(f"⚠️  Metadata verification failed (attempt {attempt + 1}): {verify_error}")
+                        
+                except Exception as e:
+                    print(f"⚠️  Failed to write session metadata (attempt {attempt + 1}): {e}")
+                
+                if attempt < 2:
+                    await asyncio.sleep(0.5)  # Wait before retry
+            
+            if not metadata_written:
+                # Critical failure - close sandbox and raise error
+                await agent.close()
+                raise RuntimeError(
+                    "Failed to write session metadata after 3 attempts. "
+                    "VNC connection would be insecure without proper user validation."
+                )
+
             # Create events for external control
             stop_event = asyncio.Event()
             pause_event = asyncio.Event()
@@ -434,15 +553,17 @@ async def start_agent(request: AgentRequest):
             yield f"data: {json.dumps({'type': 'sandbox_ready', 'session_id': session_id, 'sandbox_id': sandbox_id})}\n\n"
 
             # Get VNC WebSocket URL for noVNC library
+            # Note: Frontend must add Firebase JWT token as query param:
+            # wss://{host}/websockify?token={jwt_token}
             vnc_url = None
             if hasattr(agent.sandbox, "sandbox"):
                 try:
                     host = agent.sandbox.sandbox.get_host(6080)
                     vnc_url = (
-                        f"wss://{host}/websockify"  # Secure WebSocket URL for noVNC
+                        f"wss://{host}/websockify"  # Frontend adds ?token={jwt_token}
                     )
 
-                    yield f"data: {json.dumps({'type': 'vnc_url', 'url': vnc_url})}\n\n"
+                    yield f"data: {json.dumps({'type': 'vnc_url', 'url': vnc_url, 'session_id': session_id})}\n\n"
 
                     # Update session with VNC WebSocket URL
                     await firestore_client.update_session_vnc_url(session_id, vnc_url)
@@ -913,15 +1034,58 @@ async def replay_proven_steps(tenant_id: str, test_case_id: str):
                 user_id="replay_user"
             )
             
+            # Write session metadata to sandbox for websockify JWT validation
+            # CRITICAL: Must write BEFORE returning VNC URL to prevent race condition
+            session_metadata = {
+                "user_id": "replay_user",
+                "tenant_id": tenant_id or "",
+                "firebase_project_id": get_firebase_project_id()
+            }
+            metadata_json = json.dumps(session_metadata)
+            
+            # Write and verify metadata with retry
+            metadata_written = False
+            for attempt in range(3):
+                try:
+                    agent.sandbox.filesystem_write(
+                        "/home/user/.vnc_sessions.json",
+                        metadata_json
+                    )
+                    
+                    # Verify it was written
+                    try:
+                        check = agent.sandbox.filesystem_read("/home/user/.vnc_sessions.json")
+                        if check and len(check) > 0:
+                            metadata_written = True
+                            print(f"✅ Session metadata written and verified (attempt {attempt + 1})")
+                            break
+                    except Exception as verify_error:
+                        print(f"⚠️  Metadata verification failed (attempt {attempt + 1}): {verify_error}")
+                        
+                except Exception as e:
+                    print(f"⚠️  Failed to write session metadata (attempt {attempt + 1}): {e}")
+                
+                if attempt < 2:
+                    await asyncio.sleep(0.5)  # Wait before retry
+            
+            if not metadata_written:
+                # Critical failure for replay
+                raise RuntimeError(
+                    "Failed to write session metadata after 3 attempts. "
+                    "VNC connection would be insecure without proper user validation."
+                )
+            
             # Re-enable Firestore
             firestore_client.enabled = firestore_was_enabled
             
             # Get VNC URL and update execution record with sandbox info
+            # Note: Frontend must add Firebase JWT token as query param:
+            # wss://{host}/websockify?token={jwt_token}
             vnc_url = None
             if hasattr(agent.sandbox, "sandbox"):
                 try:
                     host = agent.sandbox.sandbox.get_host(6080)
-                    vnc_url = f"wss://{host}/websockify"
+                    vnc_url = f"wss://{host}/websockify"  # Frontend adds ?token={jwt_token}
                 except:
                     pass
             
