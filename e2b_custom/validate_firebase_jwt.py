@@ -87,6 +87,8 @@ def get_firebase_public_keys():
 
 def verify_firebase_token(token, retry_refresh=True):
     """Verify Firebase JWT token using public keys"""
+    global _public_keys_expiry  # Declare at function start
+    
     try:
         # Decode token header to get key ID
         unverified_header = jwt.get_unverified_header(token)
@@ -109,7 +111,6 @@ def verify_firebase_token(token, retry_refresh=True):
                 # Key not found - Firebase may have rotated keys
                 # Force refresh cache and try again
                 print(f"WARNING: Public key not found for kid={kid}, refreshing keys...", file=sys.stderr)
-                global _public_keys_expiry
                 _public_keys_expiry = 0  # Force cache expiry
                 public_keys = get_firebase_public_keys()
                 public_key_pem = public_keys.get(kid) if public_keys else None
@@ -163,7 +164,6 @@ def verify_firebase_token(token, retry_refresh=True):
         if retry_refresh:
             # Invalid signature could mean Firebase rotated keys mid-session
             print(f"WARNING: Invalid signature, attempting key refresh: {e}", file=sys.stderr)
-            global _public_keys_expiry
             _public_keys_expiry = 0  # Force cache expiry
             # Retry once with refreshed keys
             return verify_firebase_token(token, retry_refresh=False)
@@ -240,23 +240,30 @@ class TokenPlugin:
             # Extract user_id for logging purposes
             token_user_id = decoded_token.get('user_id') or decoded_token.get('sub')
             
-            # Extract tenant_id from token (custom claim)
+            # Extract tenant_id from token (custom claim) - OPTIONAL
+            # NOTE: Standard Firebase JWT tokens don't include tenant_id
+            # It must be set as a custom claim using Firebase Admin SDK
             token_tenant_id = decoded_token.get('tenant_id')
-            if not token_tenant_id:
-                print("ERROR: tenant_id not found in token custom claims", file=sys.stderr)
-                return None
             
-            # Validate tenant_id matches session metadata
-            # All users from the same tenant can access the sandbox
+            # Load session metadata (optional)
             session_data = load_session_metadata()
+            
+            # Validate tenant_id ONLY if present in both token AND session
             if session_data:
                 session_tenant_id = session_data.get('tenant_id')
-                if session_tenant_id and token_tenant_id != session_tenant_id:
-                    print(f"ERROR: tenant_id mismatch. Token: {token_tenant_id}, Session: {session_tenant_id}", file=sys.stderr)
-                    return None
-                print(f"INFO: Authorized connection for tenant_id={token_tenant_id}, user_id={token_user_id} (metadata verified)", file=sys.stderr)
+                
+                # If both have tenant_id, they must match
+                if token_tenant_id and session_tenant_id:
+                    if token_tenant_id != session_tenant_id:
+                        print(f"ERROR: tenant_id mismatch. Token: {token_tenant_id}, Session: {session_tenant_id}", file=sys.stderr)
+                        return None
+                    print(f"INFO: Authorized - tenant_id verified: {token_tenant_id}", file=sys.stderr)
+                else:
+                    # No tenant_id validation - allow connection
+                    print(f"INFO: Authorized - user_id: {token_user_id} (no tenant_id validation)", file=sys.stderr)
             else:
-                print(f"INFO: Authorized connection for tenant_id={token_tenant_id}, user_id={token_user_id} (no metadata - RUN context)", file=sys.stderr)
+                # No metadata file - allow connection (e.g., RUN context)
+                print(f"INFO: Authorized - user_id: {token_user_id} (no metadata)", file=sys.stderr)
             
             # All checks passed - allow connection
             # Return target as tuple (host, port) - websockify expects this format

@@ -170,7 +170,7 @@ async def execute_test_case_proven_steps(
         # CRITICAL: Must write BEFORE returning VNC URL to prevent race condition
         session_metadata = {
             "user_id": user_id,
-            "tenant_id": tenant_id or "",
+            "tenant_id": tenant_id,  # Don't use empty string - use actual value or None
             "firebase_project_id": get_firebase_project_id()
         }
         metadata_json = json.dumps(session_metadata)
@@ -498,7 +498,7 @@ async def start_agent(request: AgentRequest):
             # CRITICAL: Must write BEFORE returning VNC URL to prevent race condition
             session_metadata = {
                 "user_id": request.user_id,
-                "tenant_id": request.tenant_id or "",
+                "tenant_id": request.tenant_id,  # Don't use empty string - use actual value or None
                 "firebase_project_id": get_firebase_project_id()
             }
             metadata_json = json.dumps(session_metadata)
@@ -1038,7 +1038,7 @@ async def replay_proven_steps(tenant_id: str, test_case_id: str):
             # CRITICAL: Must write BEFORE returning VNC URL to prevent race condition
             session_metadata = {
                 "user_id": "replay_user",
-                "tenant_id": tenant_id or "",
+                "tenant_id": tenant_id,  # Don't use empty string - use actual value or None
                 "firebase_project_id": get_firebase_project_id()
             }
             metadata_json = json.dumps(session_metadata)
