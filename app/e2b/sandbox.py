@@ -238,11 +238,13 @@ echo "✅ Setup complete"
         desktop_start = time.time()
         
         # Run the pre-installed startup script and verify services started
+        # Start services in background and do quick verification (non-blocking)
         desktop_setup = """
 #!/bin/bash
 # Run startup script if it exists, otherwise start services manually
 if [ -f /home/user/start_desktop.sh ]; then
-    bash /home/user/start_desktop.sh
+    bash /home/user/start_desktop.sh > /tmp/startup.log 2>&1 &
+    STARTUP_PID=$!
 else
     # Fallback: start services manually
     export DISPLAY=:99
@@ -255,18 +257,35 @@ else
     cd /home/user/novnc && nohup websockify --web . --daemon 0.0.0.0:6080 localhost:5900 > /tmp/websockify.log 2>&1 &
 fi
 
-# Wait for services to start
-sleep 3
+# Give services a moment to start (Firebase initialization can take a few seconds)
+sleep 8
 
-# Verify services
-pgrep -a websockify && echo "✅ Websockify running" || echo "❌ Websockify failed"
-netstat -tuln 2>/dev/null | grep 6080 && echo "✅ Port 6080 listening" || echo "❌ Port 6080 not listening"
+# Quick verification (non-blocking checks)
+if pgrep -f websockify > /dev/null 2>&1; then
+    echo "✅ Websockify process found"
+    pgrep -a websockify | head -1
+else
+    echo "⚠️  Websockify process not found after 8s"
+    echo "--- websockify.log (last 20 lines) ---"
+    tail -20 /tmp/websockify.log 2>/dev/null || echo "No logs found"
+    echo "---"
+fi
+
+# Check port (quick check, don't wait)
+if netstat -tuln 2>/dev/null | grep -q 6080 || ss -tuln 2>/dev/null | grep -q 6080; then
+    echo "✅ Port 6080 listening"
+else
+    echo "⚠️  Port 6080 not listening yet (may take a few more seconds)"
+fi
+
+echo "✅ Desktop services startup completed"
 """
         
         # Run desktop startup in thread pool (exec is synchronous)
+        # Script should complete in ~10-15 seconds (starts services in background, waits 8s, then quick checks)
         result = await loop.run_in_executor(
             None,
-            lambda: e2b_sandbox.exec(desktop_setup, timeout=60)
+            lambda: e2b_sandbox.exec(desktop_setup, timeout=30)
         )
         desktop_time = time.time() - desktop_start
         
@@ -284,6 +303,27 @@ netstat -tuln 2>/dev/null | grep 6080 && echo "✅ Port 6080 listening" || echo 
                 print(f"  {line}")
         if result.stderr:
             print(f"Desktop errors: {result.stderr[:500]}")
+        
+        # Check websockify logs if process is running but port not listening
+        if "✅ Websockify process found" in result.stdout and "Port 6080 not listening" in result.stdout:
+            print(f"\n⚠️  Websockify process found but port not listening - waiting and checking again...")
+            await asyncio.sleep(5)  # Wait a bit more for websockify to fully start
+            
+            # Check again
+            check_result = await loop.run_in_executor(
+                None,
+                lambda: e2b_sandbox.exec("pgrep -a websockify && (netstat -tuln 2>&1 | grep 6080 || ss -tuln 2>&1 | grep 6080 || echo 'Port still not listening') || echo 'websockify crashed'", timeout=10)
+            )
+            print(f"Status after wait: {check_result.stdout}")
+            
+            # Get logs
+            log_check = await loop.run_in_executor(
+                None,
+                lambda: e2b_sandbox.exec("tail -50 /tmp/websockify.log 2>&1 || echo 'No logs found'", timeout=5)
+            )
+            if log_check.stdout:
+                print(f"\nWebsockify logs:\n{log_check.stdout[:800]}")
+        
         print(f"Total ready time: {total_time:.2f}s")
         print(f"{'='*70}\n")
 

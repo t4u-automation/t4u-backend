@@ -201,6 +201,10 @@ class FirestoreSettings(BaseModel):
         None,
         description="Firebase Storage bucket name (e.g., 'your-project.appspot.com')",
     )
+    project_id: Optional[str] = Field(
+        None,
+        description="Firebase project ID (e.g., 'testopsai'). If not provided, will try to extract from service account JSON or use environment variable FIREBASE_PROJECT_ID",
+    )
 
 
 class MCPSettings(BaseModel):
