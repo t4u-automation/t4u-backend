@@ -108,6 +108,91 @@ def get_firebase_project_id() -> str:
 
 
 # Shared function to execute a test case (used by replay and runs)
+async def execute_proven_steps_list(
+    agent,
+    proven_steps: list,
+    test_case_id: str,
+    step_offset: int = 0,
+    run_updates_callback = None
+) -> dict:
+    """
+    Execute a list of proven steps
+    
+    Args:
+        agent: E2BTestOpsAI agent instance with sandbox
+        proven_steps: List of proven steps to execute
+        test_case_id: Test case ID (for progress tracking)
+        step_offset: Step number offset (for sequential execution)
+        run_updates_callback: Optional callback for progress updates
+        
+    Returns:
+        Dict with {passed_count, failed_count, error}
+    """
+    import time
+    
+    passed_count = 0
+    failed_count = 0
+    error = None
+    
+    for idx, step in enumerate(proven_steps):
+        step_start = time.time()
+        current_step = step_offset + idx + 1
+        
+        # Handle both formats: {tool_name, arguments} OR {action: {tool_name, arguments}}
+        if "action" in step and isinstance(step["action"], dict):
+            # New nested format
+            tool_name = step["action"].get("tool_name")
+            arguments = step["action"].get("arguments", {})
+        else:
+            # Simple format (preferred)
+            tool_name = step.get("tool_name")
+            arguments = step.get("arguments", {})
+        
+        print(f"  Step {current_step}: {tool_name} {arguments.get('action', '')}")
+        
+        # Update current step
+        if run_updates_callback:
+            await run_updates_callback({f'results.{test_case_id}.current_step': current_step})
+        
+        # Execute step
+        tool = agent.available_tools.get_tool(tool_name)
+        if not tool:
+            error = f"Tool {tool_name} not found"
+            print(f"  ❌ {error}")
+            failed_count += 1
+            break
+        
+        try:
+            result = await tool.execute(**arguments)
+            has_error = (hasattr(result, 'error') and result.error) or str(result).startswith("Error:")
+            
+            step_elapsed = time.time() - step_start
+            
+            if has_error:
+                error = str(result)[:200]
+                print(f"  ❌ Failed ({step_elapsed:.2f}s): {error}")
+                failed_count += 1
+                # Stop on assertion failure
+                if arguments.get('action', '').startswith('assert'):
+                    print(f"  ⚠️  Assertion failed - stopping execution")
+                    break
+            else:
+                print(f"  ✅ Success ({step_elapsed:.2f}s)")
+                passed_count += 1
+                
+        except Exception as e:
+            error = str(e)
+            print(f"  ❌ Exception: {error}")
+            failed_count += 1
+            break
+    
+    return {
+        "passed_count": passed_count,
+        "failed_count": failed_count,
+        "error": error
+    }
+
+
 async def execute_test_case_proven_steps(
     tenant_id: str,
     test_case_id: str,
@@ -115,7 +200,16 @@ async def execute_test_case_proven_steps(
     run_updates_callback = None
 ):
     """
-    Execute proven steps from a test case
+    Execute proven steps from a test case including shared test cases (before/after)
+    
+    Flow:
+    1. Resolve shared test cases (before/after) recursively
+    2. Calculate total steps for progress tracking
+    3. Create E2B sandbox ONCE
+    4. Execute before test cases (if any)
+    5. Execute main test case
+    6. Execute after test cases (if any)
+    7. Close sandbox
     
     Args:
         tenant_id: Tenant ID
@@ -131,34 +225,62 @@ async def execute_test_case_proven_steps(
     
     try:
         from app.agent.e2b_agent import E2BTestOpsAI
+        from app.utils.shared_test_cases import (
+            get_full_execution_chain,
+            calculate_total_steps,
+            CircularDependencyError,
+            SharedTestCaseNotFoundError
+        )
+        import time
         
         # Generate execution ID
         execution_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_replay"
-        
-        # Get test case
-        doc_ref = firestore_client.db.collection("test_cases").document(test_case_id)
-        test_case_doc = doc_ref.get()
-        
-        if not test_case_doc.exists:
-            return {"success": False, "error": "Test case not found"}
-        
-        test_case_data = test_case_doc.to_dict()
-        proven_steps = test_case_data.get("proven_steps", [])
-        
-        if not proven_steps:
-            return {"success": False, "error": "No proven steps found"}
-        
         user_id = f"{tenant_id}_replay"
         
-        # Callback for run updates
+        # Resolve full execution chain (before, main, after)
+        try:
+            execution_chain = await get_full_execution_chain(test_case_id, tenant_id)
+        except CircularDependencyError as e:
+            error_msg = f"Circular dependency in shared test cases: {str(e)}"
+            print(f"❌ {error_msg}")
+            if run_updates_callback:
+                await run_updates_callback({
+                    f'results.{test_case_id}.status': 'failed',
+                    f'results.{test_case_id}.error': error_msg
+                })
+            return {"success": False, "error": error_msg}
+        except SharedTestCaseNotFoundError as e:
+            error_msg = f"Shared test case not found: {str(e)}"
+            print(f"❌ {error_msg}")
+            if run_updates_callback:
+                await run_updates_callback({
+                    f'results.{test_case_id}.status': 'failed',
+                    f'results.{test_case_id}.error': error_msg
+                })
+            return {"success": False, "error": error_msg}
+        
+        # Calculate total steps
+        total_steps, step_ranges = calculate_total_steps(execution_chain)
+        
+        print(f"\n{'='*70}")
+        print(f"🧪 EXECUTING TEST CASE: {test_case_id}")
+        print(f"{'='*70}")
+        print(f"Before test cases: {len(execution_chain['before'])}")
+        print(f"Main test case: {execution_chain['main']['test_case_id']}")
+        print(f"After test cases: {len(execution_chain['after'])}")
+        print(f"Total steps: {total_steps}")
+        print(f"{'='*70}\n")
+        
+        # Update status to running
         if run_updates_callback:
             await run_updates_callback({
                 f'results.{test_case_id}.status': 'running',
                 f'results.{test_case_id}.started_at': datetime.now(timezone.utc).isoformat(),
-                f'results.{test_case_id}.total_steps': len(proven_steps)
+                f'results.{test_case_id}.total_steps': total_steps
             })
         
-        # Create E2B sandbox
+        # Create E2B sandbox (used for entire execution chain)
+        print("📦 Creating E2B sandbox...")
         agent = await E2BTestOpsAI.create(
             session_id=execution_id,
             user_id=user_id,
@@ -220,98 +342,161 @@ async def execute_test_case_proven_steps(
             except:
                 pass
         
-        # Execute each proven step
-        passed_count = 0
-        failed_count = 0
-        
-        print(f"Executing {len(proven_steps)} proven steps...")
-        import time
         execution_start = time.time()
+        total_passed = 0
+        total_failed = 0
+        current_step_offset = 0
+        failed_stage = None
+        error_message = None
         
-        for idx, step in enumerate(proven_steps):
-            step_start = time.time()
-            step_number = step.get("step_number", idx + 1)
+        # PHASE 1: Execute BEFORE test cases
+        if execution_chain["before"]:
+            print(f"\n🔷 PHASE 1: BEFORE Test Cases ({len(execution_chain['before'])})")
+            print("-" * 70)
             
-            # Handle both formats: {tool_name, arguments} OR {action: {tool_name, arguments}}
-            if "action" in step and isinstance(step["action"], dict):
-                # New nested format
-                tool_name = step["action"].get("tool_name")
-                arguments = step["action"].get("arguments", {})
+            for before_tc in execution_chain["before"]:
+                before_tc_id = before_tc["test_case_id"]
+                before_steps = before_tc.get("proven_steps", [])
+                
+                print(f"\n▶ Executing BEFORE: {before_tc_id} ({len(before_steps)} steps)")
+                
+                result = await execute_proven_steps_list(
+                    agent=agent,
+                    proven_steps=before_steps,
+                    test_case_id=test_case_id,
+                    step_offset=current_step_offset,
+                    run_updates_callback=run_updates_callback
+                )
+                
+                total_passed += result["passed_count"]
+                total_failed += result["failed_count"]
+                current_step_offset += len(before_steps)
+                
+                # FAIL ENTIRE TEST if before fails
+                if result["failed_count"] > 0:
+                    failed_stage = "before"
+                    error_message = f"Before test case '{before_tc_id}' failed: {result.get('error', 'Unknown error')}"
+                    print(f"\n❌ BEFORE test case failed - aborting execution")
+                    break
+        
+        # PHASE 2: Execute MAIN test case (only if before succeeded)
+        if failed_stage is None:
+            print(f"\n🔶 PHASE 2: MAIN Test Case")
+            print("-" * 70)
+            
+            main_tc = execution_chain["main"]
+            main_tc_id = main_tc["test_case_id"]
+            main_steps = main_tc.get("proven_steps", [])
+            
+            if not main_steps:
+                failed_stage = "main"
+                error_message = "No proven steps found in main test case"
+                total_failed += 1
             else:
-                # Simple format (preferred)
-                tool_name = step.get("tool_name")
-                arguments = step.get("arguments", {})
-            
-            print(f"  Step {step_number}: {tool_name} {arguments.get('action', '')}")
-            
-            # Update current step
-            if run_updates_callback:
-                await run_updates_callback({f'results.{test_case_id}.current_step': step_number})
-            
-            # Execute step
-            tool = agent.available_tools.get_tool(tool_name)
-            if not tool:
-                print(f"  ❌ Tool {tool_name} not found")
-                failed_count += 1
-                continue
-            
-            try:
-                result = await tool.execute(**arguments)
-                has_error = (hasattr(result, 'error') and result.error) or str(result).startswith("Error:")
+                print(f"\n▶ Executing MAIN: {main_tc_id} ({len(main_steps)} steps)")
                 
-                step_elapsed = time.time() - step_start
+                result = await execute_proven_steps_list(
+                    agent=agent,
+                    proven_steps=main_steps,
+                    test_case_id=test_case_id,
+                    step_offset=current_step_offset,
+                    run_updates_callback=run_updates_callback
+                )
                 
-                if has_error:
-                    print(f"  ❌ Failed ({step_elapsed:.2f}s): {str(result)[:100]}")
-                    failed_count += 1
-                    # Stop on assertion failure
-                    if arguments.get('action', '').startswith('assert'):
-                        print(f"  ⚠️  Assertion failed - stopping replay")
-                        break
-                else:
-                    print(f"  ✅ Success ({step_elapsed:.2f}s)")
-                    passed_count += 1
-                    
-            except Exception as e:
-                print(f"  ❌ Exception: {str(e)}")
-                failed_count += 1
-                break
+                total_passed += result["passed_count"]
+                total_failed += result["failed_count"]
+                current_step_offset += len(main_steps)
+                
+                # FAIL ENTIRE TEST if main fails
+                if result["failed_count"] > 0:
+                    failed_stage = "main"
+                    error_message = f"Main test case failed: {result.get('error', 'Unknown error')}"
+                    print(f"\n❌ MAIN test case failed - skipping after test cases")
+        
+        # PHASE 3: Execute AFTER test cases (only if main succeeded)
+        if failed_stage is None and execution_chain["after"]:
+            print(f"\n🔷 PHASE 3: AFTER Test Cases ({len(execution_chain['after'])})")
+            print("-" * 70)
+            
+            for after_tc in execution_chain["after"]:
+                after_tc_id = after_tc["test_case_id"]
+                after_steps = after_tc.get("proven_steps", [])
+                
+                print(f"\n▶ Executing AFTER: {after_tc_id} ({len(after_steps)} steps)")
+                
+                result = await execute_proven_steps_list(
+                    agent=agent,
+                    proven_steps=after_steps,
+                    test_case_id=test_case_id,
+                    step_offset=current_step_offset,
+                    run_updates_callback=run_updates_callback
+                )
+                
+                total_passed += result["passed_count"]
+                total_failed += result["failed_count"]
+                current_step_offset += len(after_steps)
+                
+                # FAIL ENTIRE TEST if after fails
+                if result["failed_count"] > 0:
+                    failed_stage = "after"
+                    error_message = f"After test case '{after_tc_id}' failed: {result.get('error', 'Unknown error')}"
+                    print(f"\n❌ AFTER test case failed")
+                    break
         
         total_elapsed = time.time() - execution_start
-        print(f"\nTest case complete: {passed_count} passed, {failed_count} failed ({total_elapsed:.2f}s total)")
         
         # Determine final status
-        final_status = 'passed' if failed_count == 0 else 'failed'
+        final_status = 'passed' if total_failed == 0 else 'failed'
         
-        # Update result
+        print(f"\n{'='*70}")
+        print(f"{'✅ TEST PASSED' if final_status == 'passed' else '❌ TEST FAILED'}")
+        print(f"{'='*70}")
+        print(f"Total steps: {total_passed + total_failed}/{total_steps}")
+        print(f"Passed: {total_passed}")
+        print(f"Failed: {total_failed}")
+        if failed_stage:
+            print(f"Failed stage: {failed_stage}")
+        print(f"Duration: {total_elapsed:.2f}s")
+        print(f"{'='*70}\n")
+        
+        # Update final result
         if run_updates_callback:
-            await run_updates_callback({
+            update_data = {
                 f'results.{test_case_id}.status': final_status,
                 f'results.{test_case_id}.completed_at': datetime.now(timezone.utc).isoformat(),
-                f'results.{test_case_id}.passed_steps': passed_count,
-                f'results.{test_case_id}.failed_steps': failed_count
-            })
+                f'results.{test_case_id}.passed_steps': total_passed,
+                f'results.{test_case_id}.failed_steps': total_failed
+            }
+            if error_message:
+                update_data[f'results.{test_case_id}.error'] = error_message
+            await run_updates_callback(update_data)
         
         return {
             "success": final_status == 'passed',
             "status": final_status,
-            "passed_steps": passed_count,
-            "failed_steps": failed_count,
-            "total_steps": len(proven_steps)
+            "passed_steps": total_passed,
+            "failed_steps": total_failed,
+            "total_steps": total_steps,
+            "failed_stage": failed_stage,
+            "error": error_message
         }
         
     except Exception as e:
+        error_msg = str(e)
+        print(f"\n❌ Exception during execution: {error_msg}")
+        
         if run_updates_callback:
             await run_updates_callback({
                 f'results.{test_case_id}.status': 'failed',
-                f'results.{test_case_id}.error': str(e),
+                f'results.{test_case_id}.error': error_msg,
                 f'results.{test_case_id}.completed_at': datetime.now(timezone.utc).isoformat()
             })
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": error_msg}
         
     finally:
         # Cleanup sandbox
         if agent:
+            print("🧹 Cleaning up sandbox...")
             await agent.cleanup()
         
         # Clear VNC URL

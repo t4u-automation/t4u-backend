@@ -238,11 +238,163 @@ class E2BTestOpsAI(ToolCallAgent):
                     logger.warning("Browser tool not found - skipping auto-start")
             except Exception as e:
                 logger.warning(f"Browser auto-start failed (will start on first use): {e}")
+            
+            # Execute BEFORE shared test cases if this is an AI Exploration session with test_case_id
+            if hasattr(self, 'test_case_id') and self.test_case_id and hasattr(self, 'tenant_id') and self.tenant_id:
+                await self._execute_before_shared_test_cases()
 
         except Exception as e:
             logger.error(f"Error initializing E2B sandbox: {e}")
             raise
 
+    async def _execute_before_shared_test_cases(self):
+        """
+        Execute BEFORE shared test cases during AI Exploration session initialization.
+        
+        This runs before AI Exploration starts, setting up the browser state
+        (e.g., logging in, navigating to a specific page).
+        """
+        try:
+            from app.utils.shared_test_cases import (
+                get_test_case_data,
+                resolve_shared_test_cases,
+                CircularDependencyError,
+                SharedTestCaseNotFoundError
+            )
+            
+            logger.info(f"Checking for BEFORE shared test cases for test_case_id: {self.test_case_id}")
+            
+            # Get test case data
+            test_case_data = await get_test_case_data(self.test_case_id, self.tenant_id)
+            if not test_case_data:
+                logger.warning(f"Test case {self.test_case_id} not found - skipping before test cases")
+                return
+            
+            # Check for shared test cases
+            shared_test_cases = test_case_data.get("shared_test_cases", {})
+            before_tc_ids = shared_test_cases.get("before", [])
+            
+            if not before_tc_ids:
+                logger.info("No BEFORE shared test cases configured")
+                return
+            
+            logger.info(f"Found {len(before_tc_ids)} BEFORE shared test cases: {before_tc_ids}")
+            
+            # Resolve recursively to get all before test cases
+            try:
+                resolved = await resolve_shared_test_cases(self.test_case_id, self.tenant_id)
+                all_before_tc_ids = resolved.get("before", [])
+                
+                if not all_before_tc_ids:
+                    logger.info("No BEFORE test cases after resolution")
+                    return
+                
+                logger.info(f"Resolved to {len(all_before_tc_ids)} total BEFORE test cases: {all_before_tc_ids}")
+                
+            except CircularDependencyError as e:
+                logger.error(f"Circular dependency in shared test cases: {e}")
+                return
+            except SharedTestCaseNotFoundError as e:
+                logger.error(f"Shared test case not found: {e}")
+                return
+            
+            # Execute each before test case
+            logger.info("\n" + "="*70)
+            logger.info(f"🔷 EXECUTING BEFORE TEST CASES ({len(all_before_tc_ids)})")
+            logger.info("="*70)
+            
+            for idx, before_tc_id in enumerate(all_before_tc_ids):
+                logger.info(f"\n▶ [{idx + 1}/{len(all_before_tc_ids)}] Executing BEFORE: {before_tc_id}")
+                
+                # Get before test case data
+                before_tc_data = await get_test_case_data(before_tc_id, self.tenant_id)
+                if not before_tc_data:
+                    logger.error(f"Before test case not found: {before_tc_id}")
+                    continue
+                
+                proven_steps = before_tc_data.get("proven_steps", [])
+                if not proven_steps:
+                    logger.warning(f"No proven steps in before test case: {before_tc_id}")
+                    continue
+                
+                logger.info(f"  Executing {len(proven_steps)} proven steps...")
+                
+                # Execute each proven step
+                passed = 0
+                failed = 0
+                
+                for step_idx, step in enumerate(proven_steps):
+                    # Handle both formats: {tool_name, arguments} OR {action: {tool_name, arguments}}
+                    if "action" in step and isinstance(step["action"], dict):
+                        tool_name = step["action"].get("tool_name")
+                        arguments = step["action"].get("arguments", {})
+                    else:
+                        tool_name = step.get("tool_name")
+                        arguments = step.get("arguments", {})
+                    
+                    logger.info(f"    Step {step_idx + 1}/{len(proven_steps)}: {tool_name} {arguments.get('action', '')}")
+                    
+                    # Get tool
+                    tool = self.available_tools.get_tool(tool_name)
+                    if not tool:
+                        logger.error(f"    ❌ Tool {tool_name} not found")
+                        failed += 1
+                        break
+                    
+                    # Execute step
+                    try:
+                        result = await tool.execute(**arguments)
+                        has_error = (hasattr(result, 'error') and result.error) or str(result).startswith("Error:")
+                        
+                        if has_error:
+                            logger.error(f"    ❌ Failed: {str(result)[:100]}")
+                            failed += 1
+                            # Stop on error in before test cases
+                            break
+                        else:
+                            logger.info(f"    ✅ Success")
+                            passed += 1
+                    except Exception as e:
+                        logger.error(f"    ❌ Exception: {str(e)}")
+                        failed += 1
+                        break
+                
+                if failed > 0:
+                    logger.error(f"\n❌ BEFORE test case '{before_tc_id}' failed ({passed} passed, {failed} failed)")
+                    logger.error("⚠️  Continuing with AI Exploration despite failure (non-blocking)")
+                else:
+                    logger.info(f"\n✅ BEFORE test case '{before_tc_id}' completed successfully ({passed} steps)")
+            
+            logger.info("\n" + "="*70)
+            logger.info("✅ BEFORE TEST CASES COMPLETED")
+            logger.info("="*70 + "\n")
+            logger.info("🤖 Starting AI Exploration from current browser state...")
+            
+            # Add context to agent's memory about executed before steps
+            if all_before_tc_ids:
+                context_message = (
+                    f"🔷 CONTEXT: Setup steps have already been executed.\n\n"
+                    f"The following test cases have been completed before your task:\n"
+                )
+                for idx, tc_id in enumerate(all_before_tc_ids, 1):
+                    context_message += f"  {idx}. {tc_id}\n"
+                
+                context_message += (
+                    f"\n✅ All setup is complete. The browser is ready and in the correct state.\n"
+                    f"🎯 Your task is to CONTINUE from this point - DO NOT navigate to the application again.\n"
+                    f"🎯 The browser is already on the correct page. Just proceed with your assigned task.\n"
+                )
+                
+                # Add to agent's memory as a system message
+                from app.schema import Message
+                self.memory.add_message(Message.system_message(context_message))
+                logger.info(f"✅ Added context to agent about {len(all_before_tc_ids)} completed before test cases")
+            
+        except Exception as e:
+            logger.error(f"Error executing before shared test cases: {e}")
+            import traceback
+            traceback.print_exc()
+    
     async def cleanup(self):
         """Clean up E2B agent resources."""
         if self._initialized and self.sandbox:

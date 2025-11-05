@@ -120,6 +120,9 @@ class AIProvenSteps(BaseTool):
             print(f"✅ Saved to test_case {test_case_id}")
             print(f"{'='*70}\n")
             
+            # Execute AFTER shared test cases if configured
+            await self._execute_after_shared_test_cases(test_case_id)
+            
             return self.success_response(
                 f"✅ AI analyzed {len(execution_history)} steps\n"
                 f"✅ Extracted {len(proven_steps)} proven steps\n"
@@ -290,5 +293,142 @@ Only return the JSON array, nothing else."""
         except Exception as e:
             logger.error(f"Failed to parse proven steps from LLM: {e}")
             return []
+    
+    async def _execute_after_shared_test_cases(self, test_case_id: str):
+        """
+        Execute AFTER shared test cases after AI Exploration completes.
+        
+        This runs after proven steps are saved, for cleanup/teardown
+        (e.g., logging out, closing modals).
+        
+        Args:
+            test_case_id: The test case ID that just completed
+        """
+        try:
+            from app.utils.shared_test_cases import (
+                get_test_case_data,
+                resolve_shared_test_cases,
+                CircularDependencyError,
+                SharedTestCaseNotFoundError
+            )
+            
+            if not self._agent_ref:
+                logger.warning("No agent reference - skipping after test cases")
+                return
+            
+            tenant_id = getattr(self._agent_ref, 'tenant_id', None)
+            if not tenant_id:
+                logger.warning("No tenant_id - skipping after test cases")
+                return
+            
+            logger.info(f"Checking for AFTER shared test cases for test_case_id: {test_case_id}")
+            
+            # Get test case data
+            test_case_data = await get_test_case_data(test_case_id, tenant_id)
+            if not test_case_data:
+                logger.warning(f"Test case {test_case_id} not found - skipping after test cases")
+                return
+            
+            # Check for shared test cases
+            shared_test_cases = test_case_data.get("shared_test_cases", {})
+            after_tc_ids = shared_test_cases.get("after", [])
+            
+            if not after_tc_ids:
+                logger.info("No AFTER shared test cases configured")
+                return
+            
+            logger.info(f"Found {len(after_tc_ids)} AFTER shared test cases: {after_tc_ids}")
+            
+            # Resolve recursively to get all after test cases
+            try:
+                resolved = await resolve_shared_test_cases(test_case_id, tenant_id)
+                all_after_tc_ids = resolved.get("after", [])
+                
+                if not all_after_tc_ids:
+                    logger.info("No AFTER test cases after resolution")
+                    return
+                
+                logger.info(f"Resolved to {len(all_after_tc_ids)} total AFTER test cases: {all_after_tc_ids}")
+                
+            except CircularDependencyError as e:
+                logger.error(f"Circular dependency in shared test cases: {e}")
+                return
+            except SharedTestCaseNotFoundError as e:
+                logger.error(f"Shared test case not found: {e}")
+                return
+            
+            # Execute each after test case
+            logger.info("\n" + "="*70)
+            logger.info(f"🔷 EXECUTING AFTER TEST CASES ({len(all_after_tc_ids)})")
+            logger.info("="*70)
+            
+            for idx, after_tc_id in enumerate(all_after_tc_ids):
+                logger.info(f"\n▶ [{idx + 1}/{len(all_after_tc_ids)}] Executing AFTER: {after_tc_id}")
+                
+                # Get after test case data
+                after_tc_data = await get_test_case_data(after_tc_id, tenant_id)
+                if not after_tc_data:
+                    logger.error(f"After test case not found: {after_tc_id}")
+                    continue
+                
+                proven_steps = after_tc_data.get("proven_steps", [])
+                if not proven_steps:
+                    logger.warning(f"No proven steps in after test case: {after_tc_id}")
+                    continue
+                
+                logger.info(f"  Executing {len(proven_steps)} proven steps...")
+                
+                # Execute each proven step
+                passed = 0
+                failed = 0
+                
+                for step_idx, step in enumerate(proven_steps):
+                    # Handle both formats: {tool_name, arguments} OR {action: {tool_name, arguments}}
+                    if "action" in step and isinstance(step["action"], dict):
+                        tool_name = step["action"].get("tool_name")
+                        arguments = step["action"].get("arguments", {})
+                    else:
+                        tool_name = step.get("tool_name")
+                        arguments = step.get("arguments", {})
+                    
+                    logger.info(f"    Step {step_idx + 1}/{len(proven_steps)}: {tool_name} {arguments.get('action', '')}")
+                    
+                    # Get tool from agent
+                    tool = self._agent_ref.available_tools.get_tool(tool_name)
+                    if not tool:
+                        logger.error(f"    ❌ Tool {tool_name} not found")
+                        failed += 1
+                        break
+                    
+                    # Execute step
+                    try:
+                        result = await tool.execute(**arguments)
+                        has_error = (hasattr(result, 'error') and result.error) or str(result).startswith("Error:")
+                        
+                        if has_error:
+                            logger.error(f"    ❌ Failed: {str(result)[:100]}")
+                            failed += 1
+                            # Continue on error in after test cases (cleanup should try to complete)
+                        else:
+                            logger.info(f"    ✅ Success")
+                            passed += 1
+                    except Exception as e:
+                        logger.error(f"    ❌ Exception: {str(e)}")
+                        failed += 1
+                        # Continue on error (cleanup should try to complete)
+                
+                if failed > 0:
+                    logger.warning(f"\n⚠️  AFTER test case '{after_tc_id}' had errors ({passed} passed, {failed} failed)")
+                else:
+                    logger.info(f"\n✅ AFTER test case '{after_tc_id}' completed successfully ({passed} steps)")
+            
+            logger.info("\n" + "="*70)
+            logger.info("✅ AFTER TEST CASES COMPLETED")
+            logger.info("="*70 + "\n")
+            
+        except Exception as e:
+            logger.error(f"Error executing after shared test cases: {e}")
+            import traceback
+            traceback.print_exc()
 
 
