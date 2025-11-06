@@ -490,17 +490,32 @@ class E2BTestOpsAI(ToolCallAgent):
             
             # Add context to agent's memory about executed before steps
             if all_before_tc_ids:
+                # Get test case names for better context
+                before_names = []
+                for tc_id in all_before_tc_ids:
+                    tc_data = await get_test_case_data(tc_id, self.tenant_id)
+                    tc_name = tc_data.get("summary", tc_id) if tc_data else tc_id
+                    before_names.append(tc_name)
+                
                 context_message = (
-                    f"🔷 CONTEXT: Setup steps have already been executed.\n\n"
-                    f"The following test cases have been completed before your task:\n"
+                    f"🔷 IMPORTANT CONTEXT - READ CAREFULLY:\n\n"
+                    f"Setup steps have ALREADY been executed before your task. These are DONE:\n"
                 )
-                for idx, tc_id in enumerate(all_before_tc_ids, 1):
-                    context_message += f"  {idx}. {tc_id}\n"
+                for idx, name in enumerate(before_names, 1):
+                    context_message += f"  {idx}. {name} ✅\n"
                 
                 context_message += (
-                    f"\n✅ All setup is complete. The browser is ready and in the correct state.\n"
-                    f"🎯 Your task is to CONTINUE from this point - DO NOT navigate to the application again.\n"
-                    f"🎯 The browser is already on the correct page. Just proceed with your assigned task.\n"
+                    f"\n🎯 CRITICAL INSTRUCTIONS FOR YOU:\n"
+                    f"1. STILL CREATE A PLAN using 'planning' tool (command='create') - THIS IS MANDATORY!\n"
+                    f"2. DO NOT navigate to the application - browser is already there\n"
+                    f"3. DO NOT perform setup steps - they're already done\n"
+                    f"4. Your task starts from the CURRENT browser state\n"
+                    f"5. Create your plan for YOUR SPECIFIC TASK only\n\n"
+                    f"Example: If your task is 'Update profile', create a plan like:\n"
+                    f"  1. Locate profile section\n"
+                    f"  2. Update fields\n"
+                    f"  3. Validate changes\n\n"
+                    f"DO NOT include navigation or login in your plan - that's already done!\n"
                 )
                 
                 # Add to agent's memory as a system message
