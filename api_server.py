@@ -262,6 +262,46 @@ async def execute_test_case_proven_steps(
         # Calculate total steps
         total_steps, step_ranges = calculate_total_steps(execution_chain)
         
+        # Build execution plan for UI
+        execution_plan = {
+            "before": [],
+            "main": {},
+            "after": []
+        }
+        
+        # Add before test cases
+        for before_tc in execution_chain["before"]:
+            tc_id = before_tc["test_case_id"]
+            step_start, step_end = step_ranges[tc_id]
+            execution_plan["before"].append({
+                "test_case_id": tc_id,
+                "name": before_tc.get("summary", tc_id),
+                "steps": step_end - step_start,
+                "step_range": [step_start + 1, step_end]  # 1-indexed for UI
+            })
+        
+        # Add main test case
+        main_tc = execution_chain["main"]
+        main_tc_id = main_tc["test_case_id"]
+        step_start, step_end = step_ranges[main_tc_id]
+        execution_plan["main"] = {
+            "test_case_id": main_tc_id,
+            "name": main_tc.get("summary", main_tc_id),
+            "steps": step_end - step_start,
+            "step_range": [step_start + 1, step_end]  # 1-indexed for UI
+        }
+        
+        # Add after test cases
+        for after_tc in execution_chain["after"]:
+            tc_id = after_tc["test_case_id"]
+            step_start, step_end = step_ranges[tc_id]
+            execution_plan["after"].append({
+                "test_case_id": tc_id,
+                "name": after_tc.get("summary", tc_id),
+                "steps": step_end - step_start,
+                "step_range": [step_start + 1, step_end]  # 1-indexed for UI
+            })
+        
         print(f"\n{'='*70}")
         print(f"🧪 EXECUTING TEST CASE: {test_case_id}")
         print(f"{'='*70}")
@@ -271,12 +311,13 @@ async def execute_test_case_proven_steps(
         print(f"Total steps: {total_steps}")
         print(f"{'='*70}\n")
         
-        # Update status to running
+        # Update status to running with execution plan
         if run_updates_callback:
             await run_updates_callback({
                 f'results.{test_case_id}.status': 'running',
                 f'results.{test_case_id}.started_at': datetime.now(timezone.utc).isoformat(),
-                f'results.{test_case_id}.total_steps': total_steps
+                f'results.{test_case_id}.total_steps': total_steps,
+                f'results.{test_case_id}.execution_plan': execution_plan
             })
         
         # Create E2B sandbox (used for entire execution chain)

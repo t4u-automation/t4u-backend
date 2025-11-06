@@ -371,6 +371,33 @@ Only return the JSON array, nothing else."""
                     logger.error(f"After test case not found: {after_tc_id}")
                     continue
                 
+                # Send after test case START event to Firestore
+                try:
+                    from datetime import datetime
+                    from app.firestore import firestore_client
+                    from app.webhook import StepExecutionSchema
+                    
+                    session_id = getattr(self._agent_ref, "session_id", None)
+                    user_id = getattr(self._agent_ref, "user_id", None)
+                    
+                    start_event = StepExecutionSchema(
+                        step_number=0,
+                        timestamp=datetime.utcnow().isoformat() + "Z",
+                        agent_name=getattr(self._agent_ref, "name", "E2BTestOpsAI"),
+                        session_id=session_id,
+                        user_id=user_id,
+                        tenant_id=tenant_id,
+                        test_case_id=test_case_id,
+                        event_type="after_test_case_start",
+                        status="running",
+                        thinking=f"Executing after test case {idx + 1}/{len(all_after_tc_ids)}: {after_tc_data.get('summary', after_tc_id)}"
+                    )
+                    
+                    if firestore_client.enabled:
+                        await firestore_client.save_step(start_event, [])
+                except Exception as e:
+                    logger.debug(f"Failed to send after_test_case_start event: {e}")
+                
                 proven_steps = after_tc_data.get("proven_steps", [])
                 if not proven_steps:
                     logger.warning(f"No proven steps in after test case: {after_tc_id}")
@@ -416,6 +443,35 @@ Only return the JSON array, nothing else."""
                         logger.error(f"    ❌ Exception: {str(e)}")
                         failed += 1
                         # Continue on error (cleanup should try to complete)
+                
+                # Send after test case END event to Firestore
+                final_status = "failed" if failed > 0 else "success"
+                try:
+                    from datetime import datetime
+                    from app.firestore import firestore_client
+                    from app.webhook import StepExecutionSchema
+                    
+                    session_id = getattr(self._agent_ref, "session_id", None)
+                    user_id = getattr(self._agent_ref, "user_id", None)
+                    
+                    status_emoji = "✅" if final_status == "success" else "❌"
+                    end_event = StepExecutionSchema(
+                        step_number=0,
+                        timestamp=datetime.utcnow().isoformat() + "Z",
+                        agent_name=getattr(self._agent_ref, "name", "E2BTestOpsAI"),
+                        session_id=session_id,
+                        user_id=user_id,
+                        tenant_id=tenant_id,
+                        test_case_id=test_case_id,
+                        event_type="after_test_case_end",
+                        status=final_status,
+                        thinking=f"{status_emoji} After test case {idx + 1}/{len(all_after_tc_ids)} completed: {after_tc_data.get('summary', after_tc_id)} ({passed}/{len(proven_steps)} steps passed)"
+                    )
+                    
+                    if firestore_client.enabled:
+                        await firestore_client.save_step(end_event, [])
+                except Exception as e:
+                    logger.debug(f"Failed to send after_test_case_end event: {e}")
                 
                 if failed > 0:
                     logger.warning(f"\n⚠️  AFTER test case '{after_tc_id}' had errors ({passed} passed, {failed} failed)")

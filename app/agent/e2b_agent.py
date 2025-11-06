@@ -239,9 +239,77 @@ class E2BTestOpsAI(ToolCallAgent):
             except Exception as e:
                 logger.warning(f"Browser auto-start failed (will start on first use): {e}")
             
-            # Execute BEFORE shared test cases if this is an AI Exploration session with test_case_id
-            if hasattr(self, 'test_case_id') and self.test_case_id and hasattr(self, 'tenant_id') and self.tenant_id:
+            # Write session metadata to sandbox for websockify JWT validation
+            # CRITICAL: Must write BEFORE executing shared test cases so VNC can authenticate
+            if hasattr(self, 'session_id') and self.session_id:
+                try:
+                    import json as json_module
+                    from api_server import get_firebase_project_id
+                    
+                    session_metadata = {
+                        "user_id": getattr(self, 'user_id', None),
+                        "tenant_id": getattr(self, 'tenant_id', None),
+                        "firebase_project_id": get_firebase_project_id()
+                    }
+                    metadata_json = json_module.dumps(session_metadata)
+                    
+                    # Write and verify metadata with retry
+                    metadata_written = False
+                    for attempt in range(3):
+                        try:
+                            self.sandbox.filesystem_write(
+                                "/home/user/.vnc_sessions.json",
+                                metadata_json
+                            )
+                            
+                            # Verify it was written
+                            try:
+                                check = self.sandbox.filesystem_read("/home/user/.vnc_sessions.json")
+                                if check and len(check) > 0:
+                                    metadata_written = True
+                                    logger.info(f"✅ Session metadata written to sandbox (attempt {attempt + 1})")
+                                    break
+                            except Exception as verify_error:
+                                logger.warning(f"⚠️  Metadata verification failed (attempt {attempt + 1}): {verify_error}")
+                                
+                        except Exception as e:
+                            logger.warning(f"⚠️  Failed to write session metadata (attempt {attempt + 1}): {e}")
+                        
+                        if attempt < 2:
+                            import asyncio
+                            await asyncio.sleep(0.5)  # Wait before retry
+                    
+                    if not metadata_written:
+                        logger.error("❌ Failed to write session metadata - VNC authentication may fail")
+                    
+                    # Update VNC URL in Firestore ONLY if this is an AI Exploration session
+                    # (not a RUN/replay which uses different Firestore collection)
+                    is_replay_session = self.session_id and "_replay" in self.session_id
+                    if not is_replay_session:
+                        vnc_url = None
+                        if hasattr(self.sandbox, "sandbox"):
+                            try:
+                                host = self.sandbox.sandbox.get_host(6080)
+                                vnc_url = f"wss://{host}/websockify"
+                                
+                                # Update session with VNC URL (only for exploration sessions)
+                                await firestore_client.update_session_vnc_url(self.session_id, vnc_url)
+                                logger.info(f"✅ VNC URL updated in Firestore agent_sessions: {vnc_url}")
+                            except Exception as e:
+                                logger.debug(f"VNC URL update skipped or failed: {e}")
+                except Exception as e:
+                    logger.debug(f"Failed to update VNC/session metadata: {e}")
+            
+            # Execute BEFORE shared test cases ONLY for AI Exploration sessions
+            # NOT for RUN/replay sessions (those handle before/after in execute_test_case_proven_steps)
+            is_replay_session = hasattr(self, 'session_id') and self.session_id and "_replay" in self.session_id
+            is_exploration_session = hasattr(self, 'test_case_id') and self.test_case_id and hasattr(self, 'tenant_id') and self.tenant_id
+            
+            if is_exploration_session and not is_replay_session:
+                logger.info("🤖 This is an AI Exploration session - executing before shared test cases")
                 await self._execute_before_shared_test_cases()
+            elif is_replay_session:
+                logger.info("🔄 This is a RUN/replay session - before/after test cases handled by execute_test_case_proven_steps")
 
         except Exception as e:
             logger.error(f"Error initializing E2B sandbox: {e}")
@@ -312,6 +380,30 @@ class E2BTestOpsAI(ToolCallAgent):
                     logger.error(f"Before test case not found: {before_tc_id}")
                     continue
                 
+                # Send before test case START event to Firestore
+                try:
+                    from datetime import datetime
+                    from app.firestore import firestore_client
+                    from app.webhook import StepExecutionSchema
+                    
+                    start_event = StepExecutionSchema(
+                        step_number=0,
+                        timestamp=datetime.utcnow().isoformat() + "Z",
+                        agent_name=self.name,
+                        session_id=getattr(self, "session_id", None),
+                        user_id=getattr(self, "user_id", None),
+                        tenant_id=getattr(self, "tenant_id", None),
+                        test_case_id=getattr(self, "test_case_id", None),
+                        event_type="before_test_case_start",
+                        status="running",
+                        thinking=f"Executing before test case {idx + 1}/{len(all_before_tc_ids)}: {before_tc_data.get('summary', before_tc_id)}"
+                    )
+                    
+                    if firestore_client.enabled:
+                        await firestore_client.save_step(start_event, [])
+                except Exception as e:
+                    logger.debug(f"Failed to send before_test_case_start event: {e}")
+                
                 proven_steps = before_tc_data.get("proven_steps", [])
                 if not proven_steps:
                     logger.warning(f"No proven steps in before test case: {before_tc_id}")
@@ -358,6 +450,32 @@ class E2BTestOpsAI(ToolCallAgent):
                         logger.error(f"    ❌ Exception: {str(e)}")
                         failed += 1
                         break
+                
+                # Send before test case END event to Firestore
+                final_status = "failed" if failed > 0 else "success"
+                try:
+                    from datetime import datetime
+                    from app.firestore import firestore_client
+                    from app.webhook import StepExecutionSchema
+                    
+                    status_emoji = "✅" if final_status == "success" else "❌"
+                    end_event = StepExecutionSchema(
+                        step_number=0,
+                        timestamp=datetime.utcnow().isoformat() + "Z",
+                        agent_name=self.name,
+                        session_id=getattr(self, "session_id", None),
+                        user_id=getattr(self, "user_id", None),
+                        tenant_id=getattr(self, "tenant_id", None),
+                        test_case_id=getattr(self, "test_case_id", None),
+                        event_type="before_test_case_end",
+                        status=final_status,
+                        thinking=f"{status_emoji} Before test case {idx + 1}/{len(all_before_tc_ids)} completed: {before_tc_data.get('summary', before_tc_id)} ({passed}/{len(proven_steps)} steps passed)"
+                    )
+                    
+                    if firestore_client.enabled:
+                        await firestore_client.save_step(end_event, [])
+                except Exception as e:
+                    logger.debug(f"Failed to send before_test_case_end event: {e}")
                 
                 if failed > 0:
                     logger.error(f"\n❌ BEFORE test case '{before_tc_id}' failed ({passed} passed, {failed} failed)")
