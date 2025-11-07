@@ -274,7 +274,8 @@ class FirestoreClient:
             if message:
                 update_data["message"] = message
 
-            if status == "completed":
+            # Set completed_at timestamp for final states
+            if status in ["completed", "cancelled", "terminated", "failed"]:
                 update_data["completed_at"] = datetime.utcnow().isoformat() + "Z"
 
             doc_ref = self.db.collection("agent_sessions").document(session_id)

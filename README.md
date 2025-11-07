@@ -676,6 +676,22 @@ Stop a running agent session.
 
 ---
 
+#### `POST /agent/cancel/{session_id}`
+Cancel a running agent session and properly close all records.
+
+**Response:**
+```json
+{
+  "status": "cancelled",
+  "session_id": "20250127_123456_a1b2c3d4",
+  "message": "Agent session cancelled successfully and all records closed"
+}
+```
+
+**Note:** Unlike terminate, cancel marks the session as "cancelled" (not "terminated"), sets the `completed_at` timestamp, and saves a cancellation event to the agent_steps collection for proper session closure tracking.
+
+---
+
 #### `POST /agent/pause/{session_id}`
 Pause agent execution (preserves state).
 

@@ -2,14 +2,14 @@
 # ESPv2 Service Configuration for TestOpsAI API
 # 
 # Configuration:
-# - ESP Service URL: https://t4u-api-esp-1077634808665.us-central1.run.app
+# - ESP Service URL: https://t4u-api-esp-ctnoozc5ca-uc.a.run.app
 # - Backend Service URL: https://testopsai-api-1077634808665.us-central1.run.app
 swagger: '2.0'
 info:
   title: TestOpsAI API v1
   description: API For TestOpsAI Agent Service
-  version: 1.0.1
-host: "t4u-api-esp-1077634808665.us-central1.run.app"
+  version: 1.0.2
+host: "t4u-api-esp-ctnoozc5ca-uc.a.run.app"
 schemes:
 - https
 security:
@@ -64,6 +64,19 @@ paths:
       responses:
         '200':
           description: 'Session terminated successfully'
+  /agent/cancel/{session_id}:
+    post:
+      summary: Cancel a running agent session and close all records
+      operationId: cancel_session
+      parameters:
+        - name: session_id
+          in: path
+          description: Session ID to cancel
+          required: true
+          type: string
+      responses:
+        '200':
+          description: 'Session cancelled successfully'
   /agent/pause/{session_id}:
     post:
       summary: Pause a running agent session

@@ -1008,6 +1008,89 @@ async def terminate_session(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/agent/cancel/{session_id}")
+async def cancel_session(session_id: str):
+    """Cancel a running agent session and properly close all records
+    
+    This is different from terminate in that it:
+    - Marks the session as 'cancelled' (not 'terminated')
+    - Sets completed_at timestamp for proper session closure
+    - Saves a cancellation event to agent_steps
+    - Ensures all resources are properly cleaned up
+    """
+    if session_id not in active_sessions:
+        # Provide helpful error message
+        active_count = len(active_sessions)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session '{session_id}' not found in active sessions. Active sessions: {active_count}. Use GET /agent/sessions to list active sessions."
+        )
+
+    try:
+        session = active_sessions[session_id]
+        agent = session["agent"]
+        stop_event = session["stop_event"]
+        
+        # Save cancellation event to agent_steps
+        try:
+            from datetime import datetime
+            from app.webhook import StepExecutionSchema
+            
+            cancel_event = StepExecutionSchema(
+                step_number=agent.current_step if hasattr(agent, 'current_step') else 0,
+                timestamp=datetime.utcnow().isoformat() + "Z",
+                agent_name=agent.name if hasattr(agent, 'name') else "E2BTestOpsAI",
+                session_id=session_id,
+                user_id=getattr(agent, "user_id", None),
+                tenant_id=getattr(agent, "tenant_id", None),
+                test_case_id=getattr(agent, "test_case_id", None),
+                event_type="session_cancelled",
+                status="cancelled",
+                thinking="Session cancelled by user",
+            )
+            
+            if firestore_client.enabled:
+                await firestore_client.save_step(cancel_event, [])
+        except Exception as e:
+            print(f"⚠️  Failed to save cancellation event: {e}")
+
+        # Signal SSE to stop
+        stop_event.set()
+
+        # Print all collected steps from this session
+        all_steps = active_sessions[session_id].get("all_steps", [])
+        if all_steps:
+            firestore_client.print_session_summary(session_id, all_steps)
+
+        # Clear VNC URL
+        await firestore_client.update_session_vnc_url(session_id, None)
+        
+        # Update status to cancelled with completed_at timestamp
+        await firestore_client.update_session_status(
+            session_id, "cancelled", "Cancelled by user"
+        )
+
+        # Cleanup agent resources (sandbox, browser, etc.)
+        try:
+            await agent.cleanup()
+        except Exception as e:
+            print(f"⚠️  Agent cleanup warning: {e}")
+
+        # Remove from active sessions
+        del active_sessions[session_id]
+
+        return {
+            "status": "cancelled",
+            "session_id": session_id,
+            "message": "Agent session cancelled successfully and all records closed"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/agent/pause/{session_id}")
 async def pause_session(session_id: str):
     """Pause a running agent session (execution stops but state is preserved)"""
