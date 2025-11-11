@@ -926,15 +926,18 @@ class ToolCallAgent(BaseAgent):
             )
 
             return observation
-        except json.JSONDecodeError:
-            error_msg = f"Error parsing arguments for {name}: Invalid JSON format"
+        except json.JSONDecodeError as e:
+            error_msg = f"Error parsing arguments for {name}: Invalid JSON format - {str(e)}"
             logger.error(
-                f"📝 Oops! The arguments for '{name}' don't make sense - invalid JSON, arguments:{command.function.arguments}"
+                f"📝 Oops! The arguments for '{name}' don't make sense - invalid JSON"
             )
+            logger.error(f"Raw arguments (full): {command.function.arguments if command.function.arguments else 'None'}")
+            logger.error(f"JSON decode error: {str(e)}")
             return f"Error: {error_msg}"
         except Exception as e:
             error_msg = f"⚠️ Tool '{name}' encountered a problem: {str(e)}"
             logger.exception(error_msg)
+            logger.error(f"Tool args (full): {command.function.arguments if command.function.arguments else 'None'}")
             return f"Error: {error_msg}"
 
     async def _handle_special_tool(self, name: str, result: Any, **kwargs):

@@ -55,6 +55,7 @@ from app.firestore import firestore_client
 from app.schema import AgentState, Message
 from app.webhook import StepExecutionSchema
 from app.config import config
+from app.logger import logger
 
 app = FastAPI(title="E2B Agent API")
 
@@ -169,8 +170,15 @@ async def execute_proven_steps_list(
             step_elapsed = time.time() - step_start
             
             if has_error:
-                error = str(result)[:200]
-                print(f"  ❌ Failed ({step_elapsed:.2f}s): {error}")
+                error_full = str(result)
+                error_short = error_full[:200]
+                print(f"  ❌ Failed ({step_elapsed:.2f}s): {error_short}")
+                
+                # Log full error details for debugging
+                logger.error(f"Step {current_step} failed - Full error: {error_full}")
+                logger.error(f"Tool: {tool_name}, Action: {arguments.get('action', 'N/A')}")
+                logger.error(f"Arguments: {arguments}")
+                
                 failed_count += 1
                 # Stop on assertion failure
                 if arguments.get('action', '').startswith('assert'):
@@ -183,6 +191,8 @@ async def execute_proven_steps_list(
         except Exception as e:
             error = str(e)
             print(f"  ❌ Exception: {error}")
+            logger.exception(f"Exception executing step {current_step} ({tool_name})")
+            logger.error(f"Arguments: {arguments}")
             failed_count += 1
             break
     

@@ -559,9 +559,32 @@ async def main():
                 # Check for command file
                 try:
                     with open('/tmp/browser_command.json', 'r') as f:
-                        cmd = json.load(f)
+                        content = f.read()
+                    
+                    # Handle race condition: file exists but empty (still being written)
+                    if not content or not content.strip():
+                        print(f"[DEBUG] Command file empty, waiting for content...", flush=True)
+                        await asyncio.sleep(0.1)
+                        continue
+                    
+                    print(f"[DEBUG] Read command file: {len(content)} bytes", flush=True)
+                    print(f"[DEBUG] Full content: {content}", flush=True)
+                    cmd = json.loads(content)
+                    print(f"[DEBUG] Parsed command: {cmd.get('action', 'unknown')}", flush=True)
                 except FileNotFoundError:
                     await asyncio.sleep(0.5)
+                    continue
+                except json.JSONDecodeError as e:
+                    print(f"[ERROR] JSON decode error: {str(e)}", flush=True)
+                    print(f"[ERROR] Content that failed: {repr(content)}", flush=True)
+                    result = {"success": False, "error": f"JSON decode error: {str(e)} | Content: {repr(content)}"}
+                    with open('/tmp/browser_response.json', 'w') as f:
+                        json.dump(result, f)
+                    try:
+                        import os
+                        os.remove('/tmp/browser_command.json')
+                    except:
+                        pass
                     continue
 
                 # Execute command
@@ -1886,7 +1909,15 @@ exit 0
 
         # Write command (async)
         cmd_json = json.dumps(command)
+        logger.debug(f"📤 Sending browser command: {command.get('action', 'unknown')}")
+        logger.debug(f"📤 Command payload size: {len(cmd_json)} bytes")
+        logger.debug(f"📤 Full command JSON: {cmd_json}")
+        
+        # Write the command file
         await loop.run_in_executor(None, lambda: self.sandbox.filesystem_write("/tmp/browser_command.json", cmd_json))
+        
+        # Small delay to allow filesystem to flush (helps prevent race condition)
+        await asyncio.sleep(0.1)
 
         # Wait for response (check every 0.5 seconds, async polling)
         import time as time_module
@@ -1903,23 +1934,61 @@ exit 0
             if "ready" in check.stdout:
                 poll_time = time_module.time() - poll_start
                 print(f"  Response ready after {poll_count} polls ({poll_time:.2f}s)")
+                logger.debug(f"✅ Browser response file ready after {poll_time:.2f}s")
                 
+                # Read the response file with detailed logging
                 response_json = await loop.run_in_executor(
                     None,
                     lambda: self.sandbox.filesystem_read("/tmp/browser_response.json")
                 )
                 
+                logger.debug(f"📥 Raw response type: {type(response_json)}")
+                logger.debug(f"📥 Raw response length: {len(response_json) if response_json else 0} bytes")
+                logger.debug(f"📥 Full response content: {repr(response_json)}")
+                
                 # Parse JSON with error handling
                 try:
                     if not response_json or not response_json.strip():
-                        return {"success": False, "error": "Empty browser response"}
-                    return json.loads(response_json)
+                        logger.error("❌ Empty browser response file")
+                        # Check browser server logs
+                        log_output = await loop.run_in_executor(
+                            None,
+                            lambda: self.sandbox.exec("tail -50 /tmp/browser.log")
+                        )
+                        logger.error(f"Browser server log (last 50 lines):\n{log_output.stdout}")
+                        return {"success": False, "error": "Empty browser response - check /tmp/browser.log"}
+                    
+                    parsed = json.loads(response_json)
+                    logger.debug(f"✅ Successfully parsed JSON response: {parsed.get('success', 'unknown')}")
+                    return parsed
+                    
                 except json.JSONDecodeError as e:
-                    return {"success": False, "error": f"Invalid browser response: {str(e)[:100]} - Content: {response_json[:200]}"}
+                    logger.error(f"❌ JSON parse error: {str(e)}")
+                    logger.error(f"❌ Failed content (full): {repr(response_json)}")
+                    
+                    # Check browser server logs on error
+                    log_output = await loop.run_in_executor(
+                        None,
+                        lambda: self.sandbox.exec("tail -100 /tmp/browser.log")
+                    )
+                    logger.error(f"Browser server log (last 100 lines):\n{log_output.stdout}")
+                    
+                    return {
+                        "success": False, 
+                        "error": f"Invalid browser response: {str(e)} | Raw content: {response_json}"
+                    }
 
+        logger.error(f"⏱️ Timeout after {timeout}s waiting for browser response")
+        # Check browser server logs on timeout
+        log_output = await loop.run_in_executor(
+            None,
+            lambda: self.sandbox.exec("tail -100 /tmp/browser.log")
+        )
+        logger.error(f"Browser server log (last 100 lines):\n{log_output.stdout}")
+        
         return {
             "success": False,
-            "error": f"Timeout waiting for browser response (waited {timeout}s)",
+            "error": f"Timeout waiting for browser response (waited {timeout}s) - check /tmp/browser.log",
         }
 
     async def execute(
@@ -2406,15 +2475,19 @@ exit 0
                     return self.fail_response(result.get("error", "wait_for_load_state failed"))
 
             elif action == "assert_element_visible":
+                logger.debug(f"🔍 Executing assert_element_visible with search_text='{kwargs.get('search_text', '')}'")
                 result = await self._execute_browser_command({
                     "action": "assert_element_visible",
                     "search_text": kwargs.get("search_text", ""),
                     "assertion_description": kwargs.get("assertion_description", "")
                 })
+                logger.debug(f"🔍 assert_element_visible result: success={result.get('success')}, error={result.get('error', 'N/A')}")
                 if result.get("success"):
                     return self.success_response(result.get("message", "Assertion passed"))
                 else:
-                    return self.fail_response(result.get("error", "Assertion failed"))
+                    error_msg = result.get("error", "Assertion failed")
+                    logger.error(f"❌ assert_element_visible failed: {error_msg}")
+                    return self.fail_response(error_msg)
             
             elif action == "assert_element_hidden":
                 result = await self._execute_browser_command({
