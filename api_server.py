@@ -1805,14 +1805,56 @@ async def execute_run(request: RunExecuteRequest):
 
 if __name__ == "__main__":
     import os
+    import argparse
     
-    # Get port from environment (Cloud Run uses PORT env var)
-    port = int(os.getenv("PORT", 8000))
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='TestOpsAI API Server')
+    parser.add_argument(
+        '--model',
+        type=str,
+        choices=['claude', 'kimi', 'default'],
+        default='default',
+        help='LLM model to use. Options: default (from config), claude (Claude Haiku), kimi (Kimi K2)'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=None,
+        help='Port to run the server on (default: 8000 or PORT env var)'
+    )
+    args = parser.parse_args()
+    
+    # Override default LLM configuration based on model argument
+    if args.model != 'default':
+        # Clear LLM singleton cache to ensure new config is used
+        from app.llm import LLM
+        LLM._instances.clear()
+        
+        if args.model == 'kimi' and 'kimi' in config.llm:
+            logger.info("🔄 Switching to Kimi K2 model...")
+            config._config.llm['default'] = config.llm['kimi']
+            logger.info("✅ Kimi K2 model activated")
+        elif args.model == 'claude' and 'claude' in config.llm:
+            logger.info("🔄 Switching to Claude model...")
+            config._config.llm['default'] = config.llm['claude']
+            logger.info("✅ Claude model activated")
+        else:
+            logger.error(f"❌ {args.model} configuration not found in config.toml")
+            sys.exit(1)
+    
+    # Get port from environment (Cloud Run uses PORT env var) or argument
+    port = args.port or int(os.getenv("PORT", 8000))
+    
+    # Get current model info
+    current_model = config.llm['default'].model
+    current_base_url = config.llm['default'].base_url
     
     print("\n" + "=" * 70)
     print("🚀 TESTOPSAI API SERVER")
     print("=" * 70)
-    print(f"\n📡 API: http://localhost:{port}")
+    print(f"\n🤖 LLM Model: {current_model}")
+    print(f"🔗 API Endpoint: {current_base_url}")
+    print(f"\n📡 Server: http://localhost:{port}")
     print(f"📖 Docs: http://localhost:{port}/docs")
     print("\n📝 Usage:")
     print("  POST /agent/start")
@@ -1823,6 +1865,10 @@ if __name__ == "__main__":
     print("\n💡 Step details available via:")
     print("  - Firestore: agent_sessions, agent_sessions_executions")
     print("  - Firebase Storage: screenshots")
+    print("\n🔧 Model Selection:")
+    print("  python api_server.py              # Use default from config.toml")
+    print("  python api_server.py --model kimi    # Force Kimi K2")
+    print("  python api_server.py --model claude  # Force Claude")
     print("\n" + "=" * 70 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")

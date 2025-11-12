@@ -490,7 +490,7 @@ class ToolCallAgent(BaseAgent):
             results.append(result)
             
             # Track in execution history (for AI proven steps analysis)
-            # Save FULL results for AI to extract exact validations
+            # Screenshots are already removed at source (browser script)
             agent_type = "Main Agent" if "SubAgent" not in self.name else "Sub-Agent"
             self._execution_history.append({
                 "step_number": self.current_step,
@@ -501,7 +501,7 @@ class ToolCallAgent(BaseAgent):
                     "arguments": args
                 },
                 "result_preview": result_str[:200],  # For quick viewing
-                "result_full": result_str,  # FULL result - no truncation!
+                "result_full": result_str,  # FULL result - no truncation, no screenshots
                 "success": result_success,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })

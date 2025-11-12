@@ -31,7 +31,7 @@ from app.schema import (
     ToolChoice,
 )
 
-REASONING_MODELS = ["o1", "o3-mini"]
+REASONING_MODELS = ["o1", "o3-mini"]  # Kimi K2 uses standard API parameters
 MULTIMODAL_MODELS = [
     "gpt-4-vision-preview",
     "gpt-4o",
@@ -247,7 +247,13 @@ class LLM:
                     temperature=self.temperature,
                 )
             else:
-                self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+                import httpx
+                # Set default timeout on the client to prevent indefinite hangs
+                self.client = AsyncOpenAI(
+                    api_key=self.api_key, 
+                    base_url=self.base_url,
+                    timeout=httpx.Timeout(300.0, connect=10.0)  # 300s total, 10s connect
+                )
 
             self.token_counter = TokenCounter(self.tokenizer)
 
@@ -413,8 +419,8 @@ class LLM:
         wait=wait_random_exponential(min=1, max=60),
         stop=stop_after_attempt(6),
         retry=retry_if_exception_type(
-            (OpenAIError, Exception, ValueError)
-        ),  # Don't retry TokenLimitExceeded
+            (APIError, RateLimitError)  # Only retry API errors and rate limits, NOT timeouts
+        ),
     )
     async def ask(
         self,
@@ -422,6 +428,7 @@ class LLM:
         system_msgs: Optional[List[Union[dict, Message]]] = None,
         stream: bool = True,
         temperature: Optional[float] = None,
+        timeout: int = 300,
     ) -> str:
         """
         Send a prompt to the LLM and get the response.
@@ -431,6 +438,7 @@ class LLM:
             system_msgs: Optional system messages to prepend
             stream (bool): Whether to stream the response
             temperature (float): Sampling temperature for the response
+            timeout (int): Request timeout in seconds (default: 300)
 
         Returns:
             str: The generated response
@@ -477,7 +485,7 @@ class LLM:
             if not stream:
                 # Non-streaming request
                 response = await self.client.chat.completions.create(
-                    **params, stream=False
+                    **params, stream=False, timeout=timeout
                 )
 
                 if not response.choices or not response.choices[0].message.content:
@@ -493,7 +501,7 @@ class LLM:
             # Streaming request, For streaming, update estimated token count before making the request
             self.update_token_count(input_tokens)
 
-            response = await self.client.chat.completions.create(**params, stream=True)
+            response = await self.client.chat.completions.create(**params, stream=True, timeout=timeout)
 
             collected_messages = []
             completion_text = ""

@@ -853,13 +853,16 @@ async def main():
                         return document.body.innerText.substring(0, 1000);
                     }''')
 
-                    # Take screenshot  (disable font waiting to prevent timeouts)
-                    screenshot = await page.screenshot(full_page=False, animations='disabled')
+                    # NOTE: Screenshot removed to reduce data sent to LLM
+                    # Screenshots are huge base64 strings (~50KB each) that cause:
+                    # 1. Slow agent performance (unnecessary data in tool results)
+                    # 2. Massive analysis prompts that timeout (20 steps × 50KB = 1MB)
+                    # If screenshots are needed, use the dedicated 'screenshot' action
 
                     result['elements'] = elements
                     result['element_count'] = len(elements)
                     result['page_text'] = page_text
-                    result['screenshot'] = base64.b64encode(screenshot).decode()
+                    # result['screenshot'] = removed - not needed for get_elements
 
                 elif action == 'click':
                     try:

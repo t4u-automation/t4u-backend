@@ -1,0 +1,48 @@
+# Kimi K2 Model Configuration
+# Models available: kimi-k2-turbo-preview (faster) or kimi-k2-thinking (deeper reasoning)
+# Documentation: https://platform.moonshot.ai/docs
+
+[llm]
+model = "kimi-k2-turbo-preview"     # Faster Kimi K2 model for production use
+# model = "kimi-k2-thinking"        # Alternative: Deeper reasoning but slower
+base_url = "https://api.moonshot.ai/v1/"  # Moonshot AI API endpoint (OpenAI compatible)
+api_key = "sk-YOUR-KIMI-API-KEY-HERE"  # Get from https://platform.moonshot.ai/
+max_tokens = 8192                    # Maximum output tokens per request
+temperature = 0.0                    # Controls randomness (0.0 = deterministic)
+api_type = "openai"                  # Use OpenAI-compatible client
+api_version = ""                     # Not required for Kimi
+
+# Kimi K2 Thinking pricing configuration
+# Note: Update these values based on actual pricing from Moonshot AI
+# Current values are estimates - verify at: https://platform.moonshot.ai/docs
+[llm.pricing]
+input_price_low = 2.0        # $ per million tokens for input (estimated)
+input_price_high = 2.0       # $ per million tokens for input (estimated)
+output_price_low = 8.0       # $ per million tokens for output (estimated)
+output_price_high = 8.0      # $ per million tokens for output (estimated)
+tier_threshold = 200000      # Token count threshold for tier pricing
+
+# Optional: Vision model configuration (if needed)
+# [llm.vision]
+# model = "kimi-vision-model"         # Vision model name (if available)
+# base_url = "https://api.moonshot.ai/v1/"
+# api_key = "sk-your-api-key-here"
+# max_tokens = 8192
+# temperature = 0.0
+
+# Key Features of Kimi K2 Thinking:
+# - Trillion-parameter MoE (Mixture-of-Experts) architecture
+# - Advanced reasoning capabilities for complex problems
+# - Supports 200-300 sequential tool calls in a single session
+# - OpenAI-compatible API interface
+# - Excellent for autonomous tool orchestration
+# - Can search, retrieve info, execute code, navigate browsers, access databases
+# - Ideal for complex workflows requiring multi-step reasoning
+
+# Usage Notes:
+# 1. Get your API key from: https://platform.moonshot.ai/
+# 2. The model is OpenAI-compatible, so it works seamlessly with existing code
+# 3. Supports all standard OpenAI features: chat completion, streaming, tool calling
+# 4. Particularly strong at orchestrating multiple tools for complex tasks
+# 5. Great for test automation scenarios requiring deep reasoning
+

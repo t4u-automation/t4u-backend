@@ -43,7 +43,7 @@
 
 **T4U (Test for You)** is an AI-powered test automation platform that uses autonomous agents to create and execute web tests. Simply describe what you want to test in natural language, and T4U's AI agents will:
 
-1. **Understand** your testing goal using Claude 3.5 Sonnet
+1. **Understand** your testing goal using advanced LLMs (Claude, Kimi K2, Gemini)
 2. **Execute** tests in isolated E2B sandboxes with Playwright
 3. **Generate** stable test scripts using semantic locators
 4. **Replay** tests deterministically for regression testing
@@ -59,7 +59,8 @@
 
 #### 🤖 AI-Powered Intelligence
 - **Natural Language** - Write tests in plain English: "Login and validate dashboard"
-- **Autonomous Agents** - Claude 3.5 Sonnet understands complex testing tasks
+- **Multiple LLM Options** - Choose from Claude, Kimi K2 Thinking, or Google Gemini
+- **Advanced Reasoning** - Deep multi-step problem solving (200-300 tool calls with Kimi K2)
 - **Self-Validating** - AI includes assertions automatically
 
 #### ⚡ Performance & Scalability
@@ -134,10 +135,12 @@
 │  │  ┌──────────────┐  │         │  ┌────────────────┐  │   │
 │  │  │ Playwright   │  │         │  │ Claude 3.5     │  │   │
 │  │  │ Browser      │  │◄────────┤  │ Sonnet         │  │   │
-│  │  └──────────────┘  │         │  └────────────────┘  │   │
-│  │  ┌──────────────┐  │         │  ┌────────────────┐  │   │
-│  │  │ Desktop (VNC)│  │         │  │ Google Gemini  │  │   │
-│  │  └──────────────┘  │         │  │ (Optional)     │  │   │
+│  │  └──────────────┘  │         │  ├────────────────┤  │   │
+│  │  ┌──────────────┐  │         │  │ Kimi K2        │  │   │
+│  │  │ Desktop (VNC)│  │         │  │ Thinking       │  │   │
+│  │  └──────────────┘  │         │  ├────────────────┤  │   │
+│  │                    │         │  │ Google Gemini  │  │   │
+│  │                    │         │  │ (Optional)     │  │   │
 │  │  ┌──────────────┐  │         │  └────────────────┘  │   │
 │  │  │ Screenshots  │  │         └──────────────────────┘   │
 │  │  └──────────────┘  │                                     │
@@ -541,9 +544,10 @@ Frontend listens to these updates for live progress display.
 - **asyncio** - Asynchronous execution
 
 ### AI & LLM
-- **Claude 3.5 Sonnet (Anthropic)** - Primary LLM
+- **Claude 3.5 Sonnet (Anthropic)** - Primary LLM with extended reasoning
+- **Kimi K2 Thinking (Moonshot AI)** - Advanced reasoning model (200-300 tool calls)
 - **Google Gemini** - Alternative LLM (optional)
-- **OpenAI SDK** - LLM client interface
+- **OpenAI SDK** - LLM client interface (compatible with all models)
 
 ### Browser Automation
 - **Playwright** - Browser control
@@ -1243,6 +1247,36 @@ output_price_low = 15.0
 output_price_high = 22.5
 tier_threshold = 200000
 ```
+
+**Alternative: Kimi K2 Thinking Model**
+
+For advanced reasoning and deep multi-step tasks (supports 200-300 tool calls):
+
+```toml
+[llm]
+model = "kimi-k2-thinking"
+base_url = "https://api.moonshot.ai/v1/"
+api_key = "sk-your-kimi-api-key"  # Get from https://platform.moonshot.ai/
+max_tokens = 8192
+temperature = 0.0
+api_type = "openai"
+
+[llm.pricing]
+input_price_low = 2.0   # $ per million tokens (estimate)
+input_price_high = 2.0
+output_price_low = 8.0
+output_price_high = 8.0
+tier_threshold = 200000
+```
+
+**Kimi K2 Features:**
+- 🧠 Trillion-parameter Mixture-of-Experts (MoE) architecture
+- 🔄 200-300 sequential tool calls in a single session
+- 🎯 Advanced reasoning for complex multi-step problems
+- 🔌 OpenAI-compatible API (drop-in replacement)
+- 💪 Excellent for complex test scenarios requiring deep reasoning
+
+Copy `config/config.example-model-kimi.toml` to `config/config.toml` to get started.
 
 ### E2B Configuration
 

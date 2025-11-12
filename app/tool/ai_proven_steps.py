@@ -80,18 +80,51 @@ class AIProvenSteps(BaseTool):
             if not llm:
                 return self.fail_response("No LLM available for analysis")
             
+            print(f"📊 Using LLM: {llm.model} at {llm.base_url}")
+            
             # Create prompt for LLM to analyze steps
             analysis_prompt = self._create_analysis_prompt(execution_history, summary)
+            prompt_size = len(analysis_prompt)
+            print(f"📝 Analysis prompt size: {prompt_size:,} characters")
             
-            # Call LLM to analyze
+            # Warn if prompt is very large (might cause timeout)
+            if prompt_size > 100000:
+                print(f"⚠️  Warning: Large prompt size may cause slow response")
+            
+            # Call LLM to analyze (with explicit stream=False for reliability)
+            print("🔄 Calling LLM for analysis...")
+            
             from app.schema import Message
-            response = await llm.ask(
-                messages=[Message.user_message(analysis_prompt)],
-                system_msgs=[Message.system_message(
-                    "You are an expert at analyzing test automation execution logs. "
-                    "Extract only the essential steps that led to success, removing failed attempts and unnecessary exploration."
-                )]
-            )
+            import asyncio
+            
+            try:
+                import time
+                start_time = time.time()
+                
+                # Call LLM for analysis with timeout
+                response = await asyncio.wait_for(
+                    llm.ask(
+                        messages=[Message.user_message(analysis_prompt)],
+                        system_msgs=[Message.system_message(
+                            "You are an expert at analyzing test automation execution logs. "
+                            "Extract only the essential steps that led to success, removing failed attempts and unnecessary exploration."
+                        )],
+                        stream=False,
+                        timeout=120  # 2 minute client timeout
+                    ),
+                    timeout=180.0  # 3 minute asyncio timeout (should be much faster now)
+                )
+                
+                elapsed = time.time() - start_time
+                print(f"✅ Analysis completed in {elapsed:.1f} seconds")
+            except asyncio.TimeoutError:
+                logger.error(f"❌ LLM analysis timed out after 180 seconds")
+                return self.fail_response("LLM analysis timed out after 3 minutes.")
+            except Exception as e:
+                logger.error(f"❌ LLM analysis failed: {type(e).__name__}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                return self.fail_response(f"LLM analysis failed: {str(e)}")
             
             # llm.ask() returns a string directly
             llm_response_text = response if isinstance(response, str) else str(response)
@@ -150,14 +183,19 @@ class AIProvenSteps(BaseTool):
             if 'action' in args:
                 history_text += f" → {args['action']}"
             
-            # Show ALL arguments
+            # Show arguments (screenshots already removed at source)
             history_text += f"\n  Arguments: {json.dumps(args, indent=2)}\n"
             
-            # Show FULL result (critical for seeing exact selectors/values)
+            # Show result (screenshots already removed at source)
             history_text += f"  Result: {'✅ Success' if step['success'] else '❌ Failed'}\n"
             if step['success']:
-                # Include full result for successful steps (AI needs this!)
+                # Include result for successful steps (AI needs this!)
                 full_result = step.get('result_full', step.get('result', ''))
+                
+                # Limit result size (some results can be very long)
+                if len(full_result) > 2000:
+                    full_result = full_result[:2000] + f"... [truncated {len(full_result)-2000} chars]"
+                
                 history_text += f"  Output: {full_result}\n"
             else:
                 history_text += f"  Error: {step.get('result_full', step.get('result', ''))[:200]}\n"

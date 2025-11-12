@@ -40,12 +40,13 @@ steps:
       - "--timeout"
       - "3600"
       - "--set-env-vars"
-      - "E2B_API_KEY=${_E2B_API_KEY},ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY}"
+      - "E2B_API_KEY=${_E2B_API_KEY},ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY},KIMI_API_KEY=${_KIMI_API_KEY}"
 
 # Specify substitutions
 substitutions:
   _E2B_API_KEY: "" # Set via gcloud builds submit --substitutions
   _ANTHROPIC_API_KEY: "" # Claude API key
+  _KIMI_API_KEY: "" # Kimi K2 API key
 
 images:
   - "gcr.io/$PROJECT_ID/testopsai-api:latest"

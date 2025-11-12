@@ -1,0 +1,104 @@
+# TestOpsAI Configuration Example
+# Copy this file to config.toml and update with your API keys
+# cp config/config.example.toml config/config.toml
+
+# Default LLM configuration
+# Choose your default model by updating this section
+[llm.default]
+model = "kimi-k2-turbo-preview"     # Recommended: Fast Kimi K2 variant
+# model = "claude-haiku-4-5-20251001"  # Alternative: Claude Haiku 4.5
+base_url = "https://api.moonshot.ai/v1/"  # Kimi API endpoint
+# base_url = "https://api.anthropic.com/v1/"  # Claude API endpoint
+api_key = "sk-YOUR-API-KEY-HERE"    # REQUIRED: Your Kimi or Claude API key
+max_tokens = 40000
+temperature = 0.0
+api_type = "openai"
+api_version = ""
+
+[llm.default.pricing]
+input_price_low = 0.15        # $ per million tokens
+input_price_high = 0.15       
+output_price_low = 2.50       
+output_price_high = 2.50      
+tier_threshold = 1000000
+
+# Kimi K2 Configuration
+[llm.kimi]
+model = "kimi-k2-turbo-preview"
+base_url = "https://api.moonshot.ai/v1/"
+api_key = "sk-YOUR-KIMI-API-KEY-HERE"  # Get from https://platform.moonshot.ai/
+max_tokens = 40000
+temperature = 0.0
+api_type = "openai"
+api_version = ""
+
+[llm.kimi.pricing]
+input_price_low = 0.15
+input_price_high = 0.15
+output_price_low = 2.50
+output_price_high = 2.50
+tier_threshold = 1000000
+
+# Claude Configuration
+[llm.claude]
+model = "claude-haiku-4-5-20251001"
+base_url = "https://api.anthropic.com/v1/"
+api_key = "sk-ant-YOUR-CLAUDE-API-KEY-HERE"  # Get from https://console.anthropic.com/
+max_tokens = 60000
+temperature = 0.0
+api_type = "openai"
+api_version = ""
+
+[llm.claude.pricing]
+input_price_low = 0.4
+input_price_high = 0.8
+output_price_low = 2.0
+output_price_high = 4.0
+tier_threshold = 200000
+
+# Search settings - Google Custom Search API
+[search]
+engine = "Google"
+fallback_engines = []
+retry_delay = 60
+max_retries = 3
+lang = "en"
+country = "us"
+google_api_key = "YOUR-GOOGLE-SEARCH-API-KEY"  # Get from https://console.cloud.google.com/
+google_search_engine_id = "YOUR-SEARCH-ENGINE-ID"  # Get from https://programmablesearchengine.google.com/
+
+# E2B Sandbox Configuration
+[e2b]
+e2b_api_key = "e2b_YOUR-E2B-API-KEY-HERE"  # Get from https://e2b.dev/docs
+template = "base"  # or your custom template ID
+timeout = 1800
+cwd = "/home/user"
+
+# Firestore Configuration
+[firestore]
+enabled = true
+service_account_path = "config/firebase-service-account.json"
+collection = "agent_steps"
+storage_bucket = "your-project.firebasestorage.app"  # Update with your Firebase bucket
+
+# Webhook Configuration (Optional)
+[webhook]
+enabled = false
+endpoint = "https://your-webhook-endpoint.com"
+api_key = "your-webhook-api-key"
+
+# MCP Configuration (Optional)
+[mcp]
+server_reference = "app.mcp.server"
+
+# Runflow Configuration (Optional)
+[runflow]
+use_data_analysis_agent = false
+
+# Daytona Configuration (Optional)
+[daytona]
+daytona_api_key = "dtn_YOUR-DAYTONA-API-KEY"
+daytona_server_url = "https://app.daytona.io/api"
+daytona_target = "us"
+VNC_password = "123456"
+

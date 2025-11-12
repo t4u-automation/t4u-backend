@@ -47,7 +47,7 @@ You need 3 API keys:
 
 ```bash
 # Copy example config
-cp config/config.example-model-anthropic.toml config/config.toml
+cp config/config.example.toml config/config.toml
 
 # Edit with your keys
 nano config/config.toml
@@ -55,8 +55,8 @@ nano config/config.toml
 
 Update these values:
 ```toml
-[llm]
-api_key = "sk-ant-YOUR-KEY-HERE"
+[llm.default]
+api_key = "sk-YOUR-KIMI-OR-CLAUDE-KEY-HERE"
 
 [e2b]
 e2b_api_key = "e2b_YOUR-KEY-HERE"

@@ -14,6 +14,7 @@ REGION="us-central1"
 SERVICE_NAME="testopsai-api"
 E2B_API_KEY="your-e2b-api-key-here"  # Get from https://e2b.dev
 ANTHROPIC_API_KEY="your-anthropic-api-key-here"  # Get from https://console.anthropic.com/
+KIMI_API_KEY="your-kimi-api-key-here"  # Get from https://platform.moonshot.ai/
 
 # Check if logged in
 if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
@@ -34,7 +35,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "${SCRIPT_DIR}/../.."
 gcloud builds submit \
   --config app/deployment_google/cloudbuild.yaml \
-  --substitutions _E2B_API_KEY="${E2B_API_KEY}",_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
+  --substitutions _E2B_API_KEY="${E2B_API_KEY}",_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}",_KIMI_API_KEY="${KIMI_API_KEY}"
 
 # Get the service URL
 SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} --region ${REGION} --format 'value(status.url)')

@@ -7,7 +7,11 @@ This document lists all required and optional environment variables for T4U Back
 ### LLM Configuration
 
 ```bash
-# Anthropic Claude API Key (Primary LLM)
+# Kimi K2 API Key (Default LLM)
+KIMI_API_KEY=sk-your-kimi-api-key-here
+# Get from: https://platform.moonshot.ai/
+
+# Anthropic Claude API Key (Alternative LLM)
 ANTHROPIC_API_KEY=sk-ant-your-api-key-here
 # Get from: https://console.anthropic.com/
 ```
@@ -39,7 +43,7 @@ FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
 ### Alternative LLM
 
 ```bash
-# Google Gemini API Key (optional alternative to Claude)
+# Google Gemini API Key (optional alternative)
 GOOGLE_API_KEY=your-google-api-key-here
 # Get from: https://makersuite.google.com/app/apikey
 ```
@@ -159,17 +163,24 @@ These example files are safe:
 For production, use Google Cloud Secret Manager:
 
 ```bash
-# Create secret
+# Create Kimi API key secret
+echo -n "sk-your-kimi-key" | gcloud secrets create kimi-api-key --data-file=-
+
+# Create Anthropic API key secret
 echo -n "sk-ant-xxx" | gcloud secrets create anthropic-api-key --data-file=-
 
 # Grant access to Cloud Run
+gcloud secrets add-iam-policy-binding kimi-api-key \
+  --member=serviceAccount:PROJECT-compute@developer.gserviceaccount.com \
+  --role=roles/secretmanager.secretAccessor
+
 gcloud secrets add-iam-policy-binding anthropic-api-key \
   --member=serviceAccount:PROJECT-compute@developer.gserviceaccount.com \
   --role=roles/secretmanager.secretAccessor
 
-# Deploy with secret
+# Deploy with secrets
 gcloud run deploy testopsai-api \
-  --set-secrets=ANTHROPIC_API_KEY=anthropic-api-key:latest
+  --set-secrets=KIMI_API_KEY=kimi-api-key:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest
 ```
 
 ---
@@ -230,6 +241,44 @@ service_account_path = "config/firebase-service-account.json"
 collection = "agent_steps"
 storage_bucket = "your-project.firebasestorage.app"
 ```
+
+### config.toml (Kimi K2 Thinking Model)
+
+```toml
+[llm]
+model = "kimi-k2-thinking"
+base_url = "https://api.moonshot.ai/v1/"
+api_key = "sk-your-kimi-api-key-here"
+max_tokens = 8192
+temperature = 0.0
+api_type = "openai"
+
+[llm.pricing]
+input_price_low = 2.0        # $ per million tokens
+input_price_high = 2.0       # $ per million tokens
+output_price_low = 8.0       # $ per million tokens
+output_price_high = 8.0      # $ per million tokens
+tier_threshold = 200000      # Token count threshold
+
+[e2b]
+e2b_api_key = "e2b_xxx"
+template = "97h12m86c734x32etx23"
+timeout = 600
+cwd = "/home/user"
+
+[firestore]
+enabled = true
+service_account_path = "config/firebase-service-account.json"
+collection = "agent_steps"
+storage_bucket = "your-project.firebasestorage.app"
+```
+
+**Kimi K2 Features:**
+- 🧠 Trillion-parameter MoE (Mixture-of-Experts) architecture
+- 🔄 Supports 200-300 sequential tool calls per session
+- 🎯 Advanced reasoning for complex multi-step problems  
+- 🔌 OpenAI-compatible API (drop-in replacement)
+- 💪 Excellent for test automation requiring deep reasoning
 
 ---
 
